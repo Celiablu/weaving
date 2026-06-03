@@ -1,0 +1,1692 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weaving Beheer — CB-bestelling</title>
+<script>
+// Supabase zonder externe bibliotheek — directe fetch aanroepen
+const SUPABASE_URL = 'https://msoveybpxvflgziiyegf.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zb3ZleWJweHZmbGd6aWl5ZWdmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg3NTMwNDAsImV4cCI6MjA5NDMyOTA0MH0.qALKwA913RCO7gi3eJQqUAhNTlJELMs3-a6iA61VcR8';
+
+// ── AUTH ──
+let authToken = localStorage.getItem('wb_token') || null;
+let currentUser = null;
+
+async function checkAuth(){
+  if(!authToken) return false;
+  try{
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+authToken}
+    });
+    if(r.ok){currentUser=await r.json();return true;}
+    localStorage.removeItem('wb_token');
+    authToken=null;
+    return false;
+  }catch(e){return false;}
+}
+
+async function inloggen(){
+  const email=document.getElementById('login-email').value.trim();
+  const ww=document.getElementById('login-ww').value;
+  const msg=document.getElementById('login-msg');
+  if(!email||!ww){msg.textContent='Vul e-mail en wachtwoord in';return;}
+  const btn=document.getElementById('login-btn');btn.disabled=true;btn.textContent='Inloggen...';
+  try{
+    const r=await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`,{
+      method:'POST',
+      headers:{'apikey':SUPABASE_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({email,password:ww})
+    });
+    const d=await r.json();
+    if(d.access_token){
+      authToken=d.access_token;
+      localStorage.setItem('wb_token',authToken);
+      currentUser=d.user;
+      toonApp();
+    } else {
+      msg.textContent='Onjuist e-mailadres of wachtwoord';
+      btn.disabled=false;btn.textContent='Inloggen';
+    }
+  }catch(e){msg.textContent='Verbindingsfout';btn.disabled=false;btn.textContent='Inloggen';}
+}
+
+function uitloggen(){
+  localStorage.removeItem('wb_token');
+  authToken=null;currentUser=null;
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-scherm').style.display='flex';
+  document.getElementById('login-email').value='';
+  document.getElementById('login-ww').value='';
+  document.getElementById('login-msg').textContent='';
+}
+
+function toonApp(){
+  document.getElementById('login-scherm').style.display='none';
+  document.getElementById('app').style.display='block';
+  if(currentUser) document.getElementById('user-email').textContent=currentUser.email;
+  laadAlles().then(()=>renderLijst());
+}
+
+window.addEventListener('load', async()=>{
+  const ok=await checkAuth();
+  if(ok){toonApp();}
+  else{
+    document.getElementById('login-scherm').style.display='flex';
+    document.getElementById('app').style.display='none';
+  }
+});
+</script>
+
+<script>
+const HEADERS = () => ({
+  'apikey': SUPABASE_KEY,
+  'Authorization': 'Bearer ' + (authToken || SUPABASE_KEY),
+  'Content-Type': 'application/json',
+  'Prefer': 'return=minimal'
+});
+
+const sb = {
+  from: (table) => ({
+    insert: (rows) => fetch(`${SUPABASE_URL}/rest/v1/${table}`, {method:'POST', headers:HEADERS(), body:JSON.stringify(Array.isArray(rows)?rows:[rows])}).then(async r=>{if(!r.ok){const t=await r.text();throw new Error(t);}return {data:null,error:null};}).catch(e=>({data:null,error:e})),
+    update: (vals) => ({
+      eq: (col, val) => fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${encodeURIComponent(val)}`, {method:'PATCH', headers:HEADERS(), body:JSON.stringify(vals)}).then(async r=>{if(!r.ok){const t=await r.text();throw new Error(t);}return {data:null,error:null};}).catch(e=>({data:null,error:e}))
+    }),
+    delete: () => ({
+      eq: (col, val) => fetch(`${SUPABASE_URL}/rest/v1/${table}?${col}=eq.${encodeURIComponent(val)}`, {method:'DELETE', headers:HEADERS()}).then(async r=>{if(!r.ok){const t=await r.text();throw new Error(t);}return {data:null,error:null};}).catch(e=>({data:null,error:e}))
+    })
+  })
+};
+
+async function laadAlles(){
+  syncBar('⟳ Data laden...');
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': 'Bearer ' + SUPABASE_KEY,
+    'Content-Type': 'application/json'
+  };
+  const veiligFetch = async (url) => {
+    try{
+      const r = await fetch(url, {headers});
+      if(!r.ok) return [];
+      const d = await r.json();
+      return Array.isArray(d) ? d : [];
+    }catch(e){return [];}
+  };
+  const [b,s,w,h,hs] = await Promise.all([
+    veiligFetch(`${SUPABASE_URL}/rest/v1/bestellingen?select=*&order=created_at.desc`),
+    veiligFetch(`${SUPABASE_URL}/rest/v1/staarten?select=id,bestel_id,nr,kleur,gewicht,lengte,dikte,structuur,herkomst,punt,prijs,opm,haar_retour,haar_verloren,created_at&order=created_at.asc`),
+    veiligFetch(`${SUPABASE_URL}/rest/v1/weavings?select=*&order=created_at.asc`),
+    veiligFetch(`${SUPABASE_URL}/rest/v1/haarwerken?select=*&order=created_at.asc`),
+    veiligFetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten?select=*&order=created_at.asc`)
+  ]);
+  cache.bestellingen=b;
+  cache.staarten=s;
+  cache.weavings=w;
+  cache.haarwerken=h;
+  cache.hwStaarten=hs;
+  syncBar(null);
+}
+</script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a1a;font-size:14px;background:#f5f4f0;min-height:100vh}
+.topbar{background:#fff;border-bottom:1px solid #e5e3dc;padding:0 24px;display:flex;align-items:center;position:sticky;top:0;z-index:50;gap:0}
+.logo{font-size:15px;font-weight:700;padding:16px 0;margin-right:28px;color:#1a1a1a;white-space:nowrap}
+.tabs{display:flex;gap:0;overflow-x:auto}
+.tab{padding:18px 16px;font-size:13px;cursor:pointer;border:none;background:none;color:#666;border-bottom:2px solid transparent;white-space:nowrap;font-family:inherit;transition:color .12s}
+.tab:hover{color:#1a1a1a;background:#f9f8f5}
+.tab.active{color:#1a1a1a;border-bottom:2px solid #1a1a1a;font-weight:500}
+.container{max-width:980px;margin:0 auto;padding:24px 16px}
+.section{display:none}.section.active{display:block}
+label{font-size:13px;color:#666;display:block;margin-bottom:4px}
+input,select,textarea{width:100%;font-size:14px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;background:#fff;font-family:inherit;color:#1a1a1a;outline:none;transition:border-color .12s}
+input:focus,select:focus,textarea:focus{border-color:#888;box-shadow:0 0 0 3px rgba(0,0,0,0.06)}
+textarea{resize:vertical;min-height:52px}
+.card{background:#fff;border:1px solid #e5e3dc;border-radius:12px;padding:16px 20px;margin-bottom:12px}
+.card-hover{cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.card-hover:hover{border-color:#aaa;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+.btn{padding:8px 16px;font-size:13px;cursor:pointer;border-radius:8px;border:1px solid #ddd;background:#fff;color:#1a1a1a;font-family:inherit;white-space:nowrap;transition:background .12s}
+.btn:hover{background:#f5f4f0}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-primary{background:#1a1a1a;color:#fff;border-color:#1a1a1a}
+.btn-primary:hover{background:#333}
+.btn-danger{color:#c0392b;border-color:#f5c6c4}.btn-danger:hover{background:#fdf2f2}
+.btn-sm{padding:5px 11px;font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.badge{display:inline-block;padding:3px 10px;border-radius:6px;font-size:12px;font-weight:500}
+.badge-purple{background:#EEEDFE;color:#3C3489}
+.badge-teal{background:#E1F5EE;color:#085041}
+.badge-blue{background:#E6F1FB;color:#0C447C}
+.stat{background:#f9f8f5;border-radius:10px;padding:12px 16px;text-align:center;border:1px solid #e5e3dc}
+.stat-val{font-size:22px;font-weight:600}
+.stat-lbl{font-size:11px;color:#888;margin-top:3px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.divider{border:none;border-top:1px solid #e5e3dc;margin:16px 0}
+.sec-title{font-size:16px;font-weight:600;margin-bottom:12px}
+.detail-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f0eeea;font-size:13px}
+.detail-row:last-child{border-bottom:none}
+.detail-key{color:#888}
+.warn{color:#c0392b;font-size:13px}
+.back-btn{font-size:13px;color:#888;cursor:pointer;background:none;border:none;padding:0;margin-bottom:16px;display:flex;align-items:center;gap:6px;font-family:inherit}
+.back-btn:hover{color:#1a1a1a}
+.order-status{display:inline-block;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500}
+.status-open{background:#FAEEDA;color:#633806}
+.status-fabriek{background:#E6F1FB;color:#0C447C}
+.status-terug{background:#E1F5EE;color:#085041}
+.ws-beschikbaar{background:#E1F5EE;color:#085041}
+.ws-gereserveerd{background:#FAEEDA;color:#633806}
+.ws-verkocht{background:#F1EFE8;color:#444441}
+.kw-A{background:#E1F5EE;color:#085041}
+.kw-B{background:#FAEEDA;color:#633806}
+.kw-C{background:#FCEBEB;color:#791F1F}
+.staart-blok{background:#fff;border:1px solid #e5e3dc;border-radius:12px;margin-bottom:10px;overflow:hidden}
+.staart-header{padding:14px 16px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;user-select:none;transition:background .12s}
+.staart-header:hover{background:#f9f8f5}
+.staart-body{display:none;border-top:1px solid #f0eeea}
+.staart-body.open{display:block}
+.weaving-rij{padding:12px 16px;border-bottom:1px solid #f0eeea;display:flex;align-items:flex-start;gap:12px}
+.weaving-rij:last-child{border-bottom:none}
+.weaving-meta{flex:1;min-width:0}
+.staart-input-row{background:#f9f8f5;border-radius:10px;padding:12px;margin-bottom:8px;border:1px solid #e5e3dc}
+.foto-upload-box{border:2px dashed #ddd;border-radius:10px;padding:10px;text-align:center;cursor:pointer;background:#fff;position:relative;min-height:64px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;transition:border-color .15s}
+.foto-upload-box:hover{border-color:#888}
+.foto-upload-box input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.foto-thumb{width:46px;height:46px;object-fit:cover;border-radius:8px;border:1px solid #e5e3dc;cursor:pointer;flex-shrink:0}
+.foto-thumb-lg{width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin-bottom:12px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:200}
+.modal-box{background:#fff;border-radius:16px;padding:24px;width:92%;max-width:500px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.2)}
+.opm-bubble{background:#f5f4f0;border-radius:8px;padding:7px 12px;font-size:12px;color:#666;margin-top:6px;border-left:2px solid #ccc}
+.lookup-result{background:#f9f8f5;border-radius:12px;padding:20px;margin-top:12px;border:1px solid #e5e3dc}
+.chevron{transition:transform .2s;color:#999;font-size:18px;flex-shrink:0}
+.chevron.open{transform:rotate(180deg)}
+.empty-state{text-align:center;padding:48px 24px;color:#888}
+.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px}
+.toast{position:fixed;bottom:24px;right:24px;background:#1a1a1a;color:#fff;padding:12px 20px;border-radius:10px;font-size:13px;z-index:300;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+.sync-bar{background:#E6F1FB;color:#0C447C;font-size:12px;padding:6px 24px;text-align:center;border-bottom:1px solid #B5D4F4}
+@media(max-width:600px){.grid3{grid-template-columns:1fr 1fr}.grid4{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+
+<!-- INLOGSCHERM -->
+<div id="login-scherm" style="display:none;position:fixed;inset:0;background:#f5f4f0;z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:16px;padding:40px;width:90%;max-width:400px;box-shadow:0 8px 40px rgba(0,0,0,0.12)">
+    <div style="text-align:center;margin-bottom:28px">
+      <p style="font-size:28px;margin-bottom:8px">✂️</p>
+      <h1 style="font-size:20px;font-weight:700;color:#1a1a1a">Weaving Beheer</h1>
+      <p style="font-size:13px;color:#888;margin-top:4px">Log in om verder te gaan</p>
+    </div>
+    <div style="margin-bottom:14px">
+      <label style="font-size:13px;color:#666;display:block;margin-bottom:4px">E-mailadres</label>
+      <input type="email" id="login-email" placeholder="jouw@email.com" style="width:100%;font-size:14px;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-family:inherit" onkeydown="if(event.key==='Enter')inloggen()">
+    </div>
+    <div style="margin-bottom:20px">
+      <label style="font-size:13px;color:#666;display:block;margin-bottom:4px">Wachtwoord</label>
+      <input type="password" id="login-ww" placeholder="••••••••" style="width:100%;font-size:14px;padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-family:inherit" onkeydown="if(event.key==='Enter')inloggen()">
+    </div>
+    <button id="login-btn" onclick="inloggen()" style="width:100%;padding:12px;background:#1a1a1a;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;font-family:inherit">Inloggen</button>
+    <p id="login-msg" style="color:#c0392b;font-size:13px;margin-top:12px;text-align:center"></p>
+  </div>
+</div>
+
+<!-- HOOFDAPP -->
+<div id="app" style="display:none">
+
+<div id="sync-bar" class="sync-bar" style="display:none">⟳ Bezig met laden...</div>
+
+<div class="topbar">
+  <div class="logo">✂️ Weaving Beheer</div>
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('zendingen',this)">📦 Zendingen</button>
+    <button class="tab" onclick="showTab('bestellingen',this)">🛒 Bestellingen</button>
+    <button class="tab" onclick="showTab('voorraad',this)">📋 Voorraad</button>
+    <button class="tab" onclick="showTab('lookup',this)">🔍 Code opzoeken</button>
+    <button class="tab" onclick="showTab('export',this)">⬇️ Exporteer</button>
+  </div>
+  <div style="margin-left:auto;padding:0 16px;display:flex;align-items:center;gap:12px;flex-shrink:0">
+    <span id="user-email" style="font-size:12px;color:#888"></span>
+    <button onclick="uitloggen()" style="padding:6px 12px;font-size:12px;cursor:pointer;border-radius:6px;border:1px solid #ddd;background:#fff;color:#666;font-family:inherit">Uitloggen</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="section active" id="tab-zendingen">
+    <div id="view-lijst"></div>
+    <div id="view-bestelling" style="display:none"></div>
+  </div>
+  <div class="section" id="tab-bestellingen">
+    <div class="page-header">
+      <p class="sec-title" style="margin:0">Salon bestellingen</p>
+      <button class="btn btn-primary" onclick="nieuweBestellingForm()">+ Nieuwe bestelling</button>
+    </div>
+    <div id="bestelling-lijst"></div>
+  </div>
+  <div class="section" id="tab-voorraad">
+    <div class="page-header">
+      <p class="sec-title" style="margin:0">Voorraad weavings</p>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="grid2" style="margin-bottom:10px">
+        <div><label>🔍 Zoek op kleur, herkomst, structuur...</label><input type="text" id="filter-zoek" placeholder="bijv. Zwart, India, Golvend..." oninput="renderVoorraad()"></div>
+        <div><label>Lengte minimaal (cm)</label><input type="number" id="filter-lengte" placeholder="bijv. 60" oninput="renderVoorraad()"></div>
+      </div>
+      <div class="grid3">
+        <div><label>Status</label><select id="filter-status" onchange="renderVoorraad()"><option value="beschikbaar">Beschikbaar</option><option value="">Alle statussen</option><option value="gereserveerd">Gereserveerd</option><option value="verkocht">Verkocht</option></select></div>
+        <div><label>Kwaliteit</label><select id="filter-kw" onchange="renderVoorraad()"><option value="">Alle kwaliteiten</option><option value="A">Kwaliteit A</option><option value="B">Kwaliteit B</option><option value="C">Kwaliteit C</option></select></div>
+        <div><label>Structuur</label><select id="filter-structuur" onchange="renderVoorraad()"><option value="">Alle structuren</option><option>Steil</option><option>Licht golf</option><option>Golvend</option><option>Krullig</option></select></div>
+      </div>
+    </div>
+    <div id="voorraad-stats" class="grid4" style="margin-bottom:20px"></div>
+    <div id="voorraad-lijst"></div>
+  </div>
+  <div class="section" id="tab-lookup">
+    <p class="sec-title">Weaving opzoeken</p>
+    <div class="grid3" style="margin-bottom:16px">
+      <div><label>Code</label><input type="text" id="lookup-input" placeholder="bijv. CB-260421-01-6a" oninput="zoekWeaving()"></div>
+      <div><label>Klant naam</label><input type="text" id="lookup-klant" placeholder="bijv. Sarah de Vries" oninput="zoekOpNaam()"></div>
+      <div><label>Salon naam</label><input type="text" id="lookup-salon" placeholder="bijv. Salon Bella" oninput="zoekOpNaam()"></div>
+    </div>
+    <div id="lookup-result"></div>
+  </div>
+  <div class="section" id="tab-export">
+    <p class="sec-title">Exporteer gegevens</p>
+    <div class="grid2">
+      <div class="card"><p style="font-weight:600;margin-bottom:6px">📊 Alle bestellingen</p><p style="font-size:13px;color:#888;margin-bottom:14px">Overzicht van alle bestellingen met staart- en weavinggegevens.</p><button class="btn btn-primary" onclick="exporteerAlles()">Download CSV</button></div>
+      <div class="card"><p style="font-weight:600;margin-bottom:6px">📋 Weavings overzicht</p><p style="font-size:13px;color:#888;margin-bottom:14px">Alle weavings met gekoppelde staart- en bestelinfo.</p><button class="btn btn-primary" onclick="exporteerWeavings()">Download CSV</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-container"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+let cache = {bestellingen:[], staarten:[], weavings:[], haarwerken:[], hwStaarten:[]};
+
+function toast(msg, duur=2500){
+  const el=document.getElementById('toast');
+  el.textContent=msg;el.classList.add('show');
+  setTimeout(()=>el.classList.remove('show'),duur);
+}
+function syncBar(msg){
+  const el=document.getElementById('sync-bar');
+  if(msg){el.textContent=msg;el.style.display='block';}
+  else el.style.display='none';
+}
+
+
+function showTab(t,el){
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.getElementById('tab-'+t).classList.add('active');
+  if(el)el.classList.add('active');
+  if(t==='zendingen')renderLijst();
+  if(t==='bestellingen')renderSalonBestellingen();
+  if(t==='voorraad')renderVoorraad();
+  if(t==='lookup'){
+    document.getElementById('lookup-input').value='';
+    document.getElementById('lookup-klant').value='';
+    document.getElementById('lookup-salon').value='';
+    document.getElementById('lookup-result').innerHTML='';
+  }
+}
+
+function fotoNaarBase64(file){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      const maxW=800,maxH=800;
+      let w=img.width,h=img.height;
+      if(w>maxW){h=Math.round(h*maxW/w);w=maxW;}
+      if(h>maxH){w=Math.round(w*maxH/h);h=maxH;}
+      const canvas=document.createElement('canvas');
+      canvas.width=w;canvas.height=h;
+      canvas.getContext('2d').drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);
+      res(canvas.toDataURL('image/jpeg',0.7));
+    };
+    img.onerror=rej;
+    img.src=url;
+  });
+}
+
+// ── LIJST ──
+async function renderLijst(){
+  const el=document.getElementById('view-lijst');
+  document.getElementById('view-bestelling').style.display='none';
+  el.style.display='block';
+  el.innerHTML='<p style="color:#888;padding:20px">Laden...</p>';
+  await laadAlles();
+  let html=`<div class="page-header"><p class="sec-title" style="margin:0">Zendingen</p><button class="btn btn-primary" onclick="nieuweZendingForm()">+ Nieuwe zending</button></div>`;
+  if(!cache.bestellingen.length){
+    html+=`<div class="empty-state"><div style="font-size:48px;margin-bottom:12px">📦</div><p style="font-weight:500;margin-bottom:6px">Nog geen bestellingen</p><p style="font-size:13px">Maak je eerste bestelling aan om te beginnen.</p></div>`;
+  } else {
+    const sl={'open':'Aangemaakt','fabriek':'Bij fabriek','terug':'Terug ontvangen'};
+    cache.bestellingen.forEach(b=>{
+      const st=cache.staarten.filter(s=>s.bestel_id===b.id);
+      const wv=cache.weavings.filter(w=>w.bestel_id===b.id);
+      const beschikbaar=wv.filter(w=>!w.status||w.status==='beschikbaar').length;
+      const staartMetWeavings=st.filter(s=>wv.some(w=>w.staart_id===s.id)).length;
+      const volledigAfgerond=b.status==='terug'&&st.length>0&&staartMetWeavings===st.length;
+      const ontbreken=st.length>0&&staartMetWeavings<st.length;
+      html+=`<div class="card card-hover" onclick="openBestelling('${b.id}')">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px">
+          <div class="row" style="gap:8px">
+            <span class="badge badge-purple">${b.nummer}</span>
+            <span class="order-status status-${b.status}">${sl[b.status]||b.status}</span>
+            ${volledigAfgerond?`<span style="background:#E1F5EE;color:#085041;display:inline-block;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500">✅ Volledig afgerond</span>`:''}
+            ${ontbreken&&!volledigAfgerond?`<span style="background:#FAEEDA;color:#633806;display:inline-block;padding:3px 10px;border-radius:100px;font-size:11px;font-weight:500">⏳ ${st.length-staartMetWeavings} staart${st.length-staartMetWeavings!==1?'en':''} wacht op weavings</span>`:''}
+          </div>
+          <span style="font-size:12px;color:#888">${b.datum||''}</span>
+        </div>
+        <div class="row" style="gap:16px">
+          <span style="font-size:13px;color:#666">✂️ ${st.length} staart${st.length!==1?'en':''}</span>
+          <span style="font-size:13px;color:#666">🧶 ${wv.length} weaving${wv.length!==1?'s':''}</span>
+          ${beschikbaar>0?`<span style="font-size:13px;color:#085041">✓ ${beschikbaar} beschikbaar</span>`:''}
+          ${b.fabriek?`<span style="font-size:13px;color:#666">🏭 ${b.fabriek}</span>`:''}
+        </div>
+      </div>`;
+    });
+  }
+  el.innerHTML=html;
+}
+
+// ── NIEUWE BESTELLING ──
+let rijTeller=0;let fotoMap={};
+function nieuweZendingForm(){
+  rijTeller=0;fotoMap={};
+  const el=document.getElementById('view-lijst');
+  const jaar=new Date().getFullYear();
+  const num=String(cache.bestellingen.length+1).padStart(3,'0');
+  el.innerHTML=`
+    <button class="back-btn" onclick="renderLijst()">← Terug naar zendingen</button>
+    <p class="sec-title">Nieuwe zending aanmaken</p>
+    <div class="grid2" style="margin-bottom:12px">
+      <div><label>Bestelnummer *</label><input type="text" id="nb-nr" value="${jaar}-${num}"></div>
+      <div><label>Fabriek</label><input type="text" id="nb-fab" placeholder="bijv. Remy Factory"></div>
+    </div>
+    <div class="grid2" style="margin-bottom:12px">
+      <div><label>Besteldatum</label><input type="date" id="nb-datum" value="${new Date().toISOString().split('T')[0]}"></div>
+      <div><label>Verwachte levering</label><input type="date" id="nb-levering"></div>
+    </div>
+    <div style="margin-bottom:12px"><label>Opmerkingen</label><textarea id="nb-opm" placeholder="Extra info..."></textarea></div>
+    <hr class="divider">
+    <p class="sec-title">Staarten in deze bestelling</p>
+    <div id="staart-rijen"></div>
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn btn-sm" onclick="voegSlaartRijToe()">+ Staart toevoegen</button>
+      <button class="btn btn-sm btn-danger" onclick="verwijderLaatsteRij()">− Verwijderen</button>
+    </div>
+    <div class="row"><button class="btn btn-primary" id="opslaan-btn" onclick="slaBestellingOp()">💾 Bestelling opslaan</button><span id="nb-msg" style="font-size:13px;margin-left:8px"></span></div>`;
+  voegSlaartRijToe();
+}
+
+function staartRijHTML(i){
+  return `<div class="staart-input-row" id="staart-rij-${i}">
+    <div style="font-size:12px;font-weight:600;color:#888;margin-bottom:10px">Staart ${i+1}</div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div><label>Nummer *</label><input type="text" id="sr-nr-${i}" placeholder="bijv. ST-006"></div>
+      <div><label>Kleur</label><input type="text" id="sr-kleur-${i}" placeholder="bijv. Zwart #1B"></div>
+      <div><label>Gewicht (g) *</label><input type="number" id="sr-gew-${i}" placeholder="250"></div>
+    </div>
+    <div class="grid4" style="margin-bottom:8px">
+      <div><label>Lengte (cm)</label><input type="number" id="sr-len-${i}" placeholder="60"></div>
+      <div><label>Dikte</label><select id="sr-dikte-${i}"><option value="">—</option><option>Dun</option><option>Medium</option><option>Dik</option></select></div>
+      <div><label>Structuur</label><select id="sr-str-${i}"><option value="">—</option><option>Steil</option><option>Licht golf</option><option>Golvend</option><option>Krullig</option></select></div>
+      <div><label>Herkomst</label><input type="text" id="sr-herk-${i}" placeholder="India"></div>
+    </div>
+    <div class="grid4" style="margin-bottom:8px">
+      <div><label>Punt</label><select id="sr-punt-${i}"><option value="">—</option><option>Vol</option><option>Half vol</option><option>Dun</option><option>Zeer dun</option></select></div>
+      <div><label>Inkoopprijs (€)</label><input type="number" id="sr-prijs-${i}" placeholder="45.00" step="0.01"></div>
+      <div><label>Foto van staart</label>
+        <div class="foto-upload-box" id="foto-box-${i}">
+          <input type="file" accept="image/*" onchange="laadFoto(${i},this)">
+          <span style="font-size:20px">📷</span>
+          <span style="font-size:11px;color:#888">Foto toevoegen</span>
+        </div>
+      </div>
+      <div><label>Opmerking</label><textarea id="sr-opm-${i}" placeholder="bijv. lichte kleurvariatie..."></textarea></div>
+    </div>
+  </div>`;
+}
+
+async function laadFoto(i,input){
+  if(!input.files[0])return;
+  const b64=await fotoNaarBase64(input.files[0]);
+  fotoMap[i]=b64;
+  const box=document.getElementById('foto-box-'+i);
+  box.innerHTML=`<input type="file" accept="image/*" onchange="laadFoto(${i},this)"><img src="${b64}" style="width:100%;height:56px;object-fit:cover;border-radius:8px"><span style="font-size:10px;color:#888">Klik om te wijzigen</span>`;
+}
+
+function voegSlaartRijToe(){document.getElementById('staart-rijen')?.insertAdjacentHTML('beforeend',staartRijHTML(rijTeller));rijTeller++;}
+function verwijderLaatsteRij(){if(rijTeller<=1)return;rijTeller--;document.getElementById('staart-rij-'+rijTeller)?.remove();delete fotoMap[rijTeller];}
+
+async function slaBestellingOp(){
+  const nr=document.getElementById('nb-nr')?.value.trim();
+  if(!nr){document.getElementById('nb-msg').innerHTML='<span class="warn">Vul een bestelnummer in</span>';return;}
+  if(cache.bestellingen.find(b=>b.nummer===nr)){document.getElementById('nb-msg').innerHTML='<span class="warn">Dit nummer bestaat al</span>';return;}
+  const btn=document.getElementById('opslaan-btn');btn.disabled=true;btn.textContent='Opslaan...';
+  const id='b_'+Date.now();
+  let nieuweStaarten=[];let fout=false;
+  for(let i=0;i<rijTeller;i++){
+    const el=document.getElementById('staart-rij-'+i);if(!el)continue;
+    const snr=document.getElementById('sr-nr-'+i)?.value.trim();
+    const gew=document.getElementById('sr-gew-'+i)?.value;
+    if(!snr||!gew){fout=true;break;}
+    nieuweStaarten.push({id:'s_'+Date.now()+'_'+i,bestel_id:id,nr:snr,kleur:document.getElementById('sr-kleur-'+i)?.value||'',gewicht:parseFloat(gew),lengte:document.getElementById('sr-len-'+i)?.value||'',dikte:document.getElementById('sr-dikte-'+i)?.value||'',structuur:document.getElementById('sr-str-'+i)?.value||'',herkomst:document.getElementById('sr-herk-'+i)?.value||'',punt:document.getElementById('sr-punt-'+i)?.value||'',prijs:document.getElementById('sr-prijs-'+i)?.value||'',opm:document.getElementById('sr-opm-'+i)?.value||'',foto:fotoMap[i]||null});
+  }
+  if(fout||!nieuweStaarten.length){document.getElementById('nb-msg').innerHTML='<span class="warn">Vul nummer en gewicht in voor alle staarten</span>';btn.disabled=false;btn.textContent='💾 Bestelling opslaan';return;}
+  const bestelling={id,nummer:nr,datum:document.getElementById('nb-datum')?.value||new Date().toLocaleDateString('nl-NL'),levering:document.getElementById('nb-levering')?.value||'',fabriek:document.getElementById('nb-fab')?.value.trim()||'',opm:document.getElementById('nb-opm')?.value||'',status:'open'};
+  try{
+    await sb.from('bestellingen').insert(bestelling);
+    await sb.from('staarten').insert(nieuweStaarten);
+    cache.bestellingen.unshift(bestelling);
+    cache.staarten.push(...nieuweStaarten);
+    toast('✓ Bestelling opgeslagen!');
+    rijTeller=0;fotoMap={};
+    openBestelling(id);
+  }catch(e){document.getElementById('nb-msg').innerHTML='<span class="warn">Fout bij opslaan: '+e.message+'</span>';btn.disabled=false;btn.textContent='💾 Bestelling opslaan';}
+}
+
+// ── BESTELLING DETAIL ──
+async function openBestelling(id){
+  document.getElementById('view-lijst').style.display='none';
+  document.getElementById('view-bestelling').style.display='block';
+  syncBar('⟳ Data laden...');
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+  const veiligFetch = async (url) => {
+    try{const r=await fetch(url,{headers});if(!r.ok)return[];const d=await r.json();return Array.isArray(d)?d:[];}catch(e){return[];}
+  };
+  const [b,s,w] = await Promise.all([
+    veiligFetch(`${SUPABASE_URL}/rest/v1/bestellingen?id=eq.${encodeURIComponent(id)}&select=*`),
+    veiligFetch(`${SUPABASE_URL}/rest/v1/staarten?bestel_id=eq.${encodeURIComponent(id)}&select=*&order=created_at.asc`),
+    veiligFetch(`${SUPABASE_URL}/rest/v1/weavings?bestel_id=eq.${encodeURIComponent(id)}&select=*&order=created_at.asc`)
+  ]);
+  if(b.length){
+    cache.bestellingen=cache.bestellingen.filter(x=>x.id!==id);
+    cache.bestellingen.push(...b);
+  }
+  cache.staarten=cache.staarten.filter(x=>x.bestel_id!==id);
+  cache.staarten.push(...s);
+  cache.weavings=cache.weavings.filter(x=>x.bestel_id!==id);
+  cache.weavings.push(...w);
+  syncBar(null);
+  renderBestelling(id);
+  setTimeout(()=>laadHaarwerken(id),100);
+}
+
+function toggleSlaart(sid){
+  const body=document.getElementById('sb-'+sid);
+  const chev=document.getElementById('chev-'+sid);
+  if(!body)return;
+  const open=body.classList.toggle('open');
+  if(chev)chev.classList.toggle('open',open);
+}
+
+function wStatusBadge(s){
+  const map={beschikbaar:'ws-beschikbaar',gereserveerd:'ws-gereserveerd',verkocht:'ws-verkocht'};
+  return `<span class="badge ${map[s]||'badge-gray'}">${s||'beschikbaar'}</span>`;
+}
+function kwBadge(k){return k?`<span class="badge kw-${k}">Kwaliteit ${k}</span>`:''}
+
+function renderBestelling(id){
+  const b=cache.bestellingen.find(x=>x.id===id);if(!b)return;
+  const staarten=cache.staarten.filter(s=>s.bestel_id===id);
+  const alleW=cache.weavings.filter(w=>w.bestel_id===id);
+  const totS=staarten.reduce((a,s)=>a+(parseFloat(s.gewicht)||0),0);
+  const totW=alleW.reduce((a,w)=>a+(parseFloat(w.gewicht)||0),0);
+  const verlies=totW>0?(totS-totW).toFixed(1)+'g':'—';
+  const verliesPct=totW>0?' ('+((totS-totW)/totS*100).toFixed(1)+'%)':'';
+  const sl={'open':'Aangemaakt','fabriek':'Bij fabriek','terug':'Terug ontvangen'};
+  const volgende=b.status==='open'?'fabriek':b.status==='fabriek'?'terug':null;
+  const volgendeLbl=b.status==='open'?'→ Verstuurd naar fabriek':'→ Terug ontvangen';
+
+  const staartBlokken=staarten.map(s=>{
+    const sw=alleW.filter(w=>w.staart_id===s.id);
+    const beschikbaar=sw.filter(w=>!w.status||w.status==='beschikbaar').length;
+    const verkocht=sw.filter(w=>w.status==='verkocht').length;
+    const gereserveerd=sw.filter(w=>w.status==='gereserveerd').length;
+    const weavingItems=sw.length?sw.map(w=>`
+      <div class="weaving-rij">
+        <div class="weaving-meta">
+          <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:6px">
+            <span class="badge badge-teal">${w.code}</span>
+            ${wStatusBadge(w.status)}
+            ${kwBadge(w.kwaliteit)}
+          </div>
+          <div style="font-size:12px;color:#666;display:flex;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+            ${w.gewicht?`<span>⚖️ ${w.gewicht}g</span>`:''}
+            ${w.lengte?`<span>📏 ${w.lengte}cm</span>`:''}
+            ${w.weft?`<span>↔️ ${w.weft}cm breedte</span>`:''}
+            ${w.prijs?`<span>💶 €${parseFloat(w.prijs).toFixed(2)}</span>`:''}
+            ${w.salon?`<span>🏠 ${w.salon}</span>`:''}
+            ${w.klant?`<span>👤 ${w.klant}</span>`:''}
+          </div>
+          ${w.opm?`<div class="opm-bubble">${w.opm}</div>`:''}
+        </div>
+        <button class="btn btn-sm" onclick="openWeavingEdit('${w.id}','${id}')">✏️</button>
+      </div>`).join('')
+    :`<div style="padding:12px 16px;font-size:13px;color:#888">Nog geen weavings geregistreerd.</div>`;
+
+    return `<div class="staart-blok">
+      <div class="staart-header" onclick="toggleSlaart('${s.id}')">
+        <div class="row" style="gap:12px;flex:1;min-width:0">
+          ${s.foto
+            ?`<div style="display:flex;gap:4px;flex-shrink:0">
+                <img src="${s.foto}" class="foto-thumb" onclick="event.stopPropagation();toonFotoModal('${s.id}')" alt="foto 1">
+                ${s.foto2?`<img src="${s.foto2}" class="foto-thumb" onclick="event.stopPropagation();toonFotoModal('${s.id}')" alt="foto 2">`
+                :`<div style="width:46px;height:46px;border-radius:8px;background:#f5f4f0;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;font-size:14px" onclick="event.stopPropagation();openFotoUpload('${s.id}','${id}','foto2')" title="Tweede foto toevoegen">+📷</div>`}
+              </div>`
+            :`<div style="width:46px;height:46px;border-radius:8px;background:#f5f4f0;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;font-size:20px" onclick="event.stopPropagation();openFotoUpload('${s.id}','${id}','foto')">📷</div>`}
+          <div style="flex:1;min-width:0">
+            <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:4px">
+              <span class="badge badge-purple">${s.nr}</span>
+              ${s.kleur?`<span style="font-size:12px;color:#666">${s.kleur}</span>`:''}
+              ${s.herkomst?`<span style="font-size:12px;color:#666">${s.herkomst}</span>`:''}
+              ${sw.length===0?`<span style="background:#FAEEDA;color:#633806;display:inline-block;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:500">⏳ Weavings ontbreken</span>`:``}
+            </div>
+            <div style="font-size:12px;color:#888;display:flex;gap:10px;flex-wrap:wrap">
+              <span>${s.gewicht}g</span>
+              ${s.lengte?`<span>${s.lengte}cm</span>`:''}
+              ${s.dikte?`<span>${s.dikte}</span>`:''}
+              ${s.structuur?`<span>${s.structuur}</span>`:''}
+              ${s.punt?`<span>Punt: ${s.punt}</span>`:''}
+              <span style="color:#1a1a1a;font-weight:500">${sw.length} weaving${sw.length!==1?'s':''}</span>
+              ${beschikbaar?`<span style="color:#085041">${beschikbaar} beschikbaar</span>`:''}
+              ${gereserveerd?`<span style="color:#633806">${gereserveerd} gereserveerd</span>`:''}
+              ${verkocht?`<span style="color:#444">${verkocht} verkocht</span>`:''}
+            </div>
+          </div>
+        </div>
+        <div class="row" style="gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
+          <button class="btn btn-sm" onclick="toonFotoModal('${s.id}')">📷</button>
+          <button class="btn btn-sm" onclick="openSlaartOpmForm('${s.id}','${id}')">💬</button>
+          <button class="btn btn-sm" onclick="openSlaartEdit('${s.id}','${id}')">✏️</button>
+          <button class="btn btn-sm btn-primary" onclick="openWeavingForm('${id}','${s.id}')">+ Weaving</button>
+        </div>
+        <span class="chevron" id="chev-${s.id}">▾</span>
+      </div>
+      ${s.opm?`<div style="padding:6px 16px 10px;background:#fafaf8"><div class="opm-bubble">${s.opm}</div></div>`:''}
+      ${(()=>{
+        const totWeavingGew=sw.reduce((a,w)=>a+(parseFloat(w.gewicht)||0),0);
+        const retour=parseFloat(s.haar_retour)||0;
+        const verloren=parseFloat(s.haar_verloren)||0;
+        const totaalVerwerkt=totWeavingGew+retour+verloren;
+        const verliesGew=(s.gewicht-totaalVerwerkt).toFixed(1);
+        const verliesPct=s.gewicht>0?((s.gewicht-totaalVerwerkt)/s.gewicht*100).toFixed(1):0;
+        if(totWeavingGew===0) return '';
+        return `<div style="padding:8px 16px;background:#fafaf8;border-top:1px solid #f0eeea;display:flex;gap:16px;flex-wrap:wrap">
+          <span style="font-size:12px;color:#666">⚖️ Weavings: <strong>${totWeavingGew.toFixed(1)}g</strong></span>
+          ${retour?`<span style="font-size:12px;color:#666">↩️ Haar retour: <strong>${retour}g</strong></span>`:''}
+          ${verloren?`<span style="font-size:12px;color:#c0392b">⚠️ Haar verloren: <strong>${verloren}g</strong></span>`:''}
+          <span style="font-size:12px;color:${parseFloat(verliesGew)>0?'#c0392b':'#085041'}">
+            ${parseFloat(verliesGew)>0?`⚠️ Verlies: <strong>${verliesGew}g (${verliesPct}%)</strong>`:`✓ Gewichten kloppen`}
+          </span>
+        </div>`;
+      })()}
+      <div class="staart-body" id="sb-${s.id}">${weavingItems}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('view-bestelling').innerHTML=`
+    <button class="back-btn" onclick="terugNaarLijst()">← Alle bestellingen</button>
+    <div class="page-header">
+      <div class="row" style="gap:10px"><span style="font-size:20px;font-weight:700">${b.nummer}</span><span class="order-status status-${b.status}">${sl[b.status]||b.status}</span></div>
+      <div class="row" style="gap:8px">
+        ${volgende?`<button class="btn btn-sm" onclick="updateStatus('${id}','${volgende}')">${volgendeLbl}</button>`:''}
+        <button class="btn btn-sm" onclick="openBestellingEdit('${id}')">✏️ Bewerken</button>
+        <button class="btn btn-sm" onclick="verversData('${id}')">🔄 Verversen</button>
+        <button class="btn btn-sm" onclick="exporteerBestelling('${id}')">⬇️ CSV</button>
+      </div>
+    </div>
+    <div class="grid3" style="margin-bottom:16px">
+      <div class="stat"><div class="stat-val">${staarten.length}</div><div class="stat-lbl">Staarten</div></div>
+      <div class="stat"><div class="stat-val">${totS.toFixed(0)}g</div><div class="stat-lbl">Ingezonden</div></div>
+      <div class="stat"><div class="stat-val">${totW>0?totW.toFixed(0)+'g':'—'}</div><div class="stat-lbl">Terug als weavings</div></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;gap:24px;flex-wrap:wrap">
+        ${b.fabriek?`<div><span style="font-size:12px;color:#888">Fabriek</span><p>${b.fabriek}</p></div>`:''}
+        ${b.datum?`<div><span style="font-size:12px;color:#888">Besteld</span><p>${b.datum}</p></div>`:''}
+        ${b.levering?`<div><span style="font-size:12px;color:#888">Verwachte levering</span><p>${b.levering}</p></div>`:''}
+      </div>
+      ${b.opm?`<p style="font-size:13px;color:#888;margin-top:10px">${b.opm}</p>`:''}
+    </div>
+    <p class="sec-title">Staarten & weavings</p>
+    ${staartBlokken||'<p style="color:#888">Geen staarten</p>'}
+    <div style="margin-top:10px"><button class="btn btn-sm" onclick="openSlaartToevoegen('${id}')">+ Staart toevoegen aan zending</button></div>
+    <div id="weaving-form-container" style="margin-top:16px"></div>
+    <hr class="divider" style="margin:24px 0">
+    <p class="sec-title">💇 Staarten & haarwerken</p>
+    <div id="haarwerk-lijst-${id}">
+      <p style="color:#888;font-size:13px">Laden...</p>
+    </div>
+    <div style="margin-top:10px"><button class="btn btn-sm" onclick="openHWStaartToevoegen2('${id}')">+ Staart toevoegen voor haarwerk</button></div>`;
+}
+
+async function verversData(bestelId){
+  await openBestelling(bestelId);
+  toast('✓ Data ververst');
+}
+
+function terugNaarLijst(){document.getElementById('view-bestelling').style.display='none';document.getElementById('view-lijst').style.display='block';renderLijst();}
+
+async function updateStatus(id,status){
+  await sb.from('bestellingen').update({status}).eq('id',id);
+  const b=cache.bestellingen.find(x=>x.id===id);if(b)b.status=status;
+  toast('✓ Status bijgewerkt');
+  renderBestelling(id);
+}
+
+// ── BESTELLING BEWERKEN ──
+function openBestellingEdit(bid){
+  const b=cache.bestellingen.find(x=>x.id===bid);if(!b)return;
+  showModal(`<p style="font-weight:600;margin-bottom:14px">✏️ Bestelling bewerken — <span class="badge badge-purple">${b.nummer}</span></p>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Bestelnummer</label><input type="text" id="be-nr" value="${b.nummer||''}"></div>
+      <div><label>Fabriek</label><input type="text" id="be-fab" value="${b.fabriek||''}"></div>
+    </div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Besteldatum</label><input type="date" id="be-datum" value="${b.datum||''}"></div>
+      <div><label>Verwachte levering</label><input type="date" id="be-levering" value="${b.levering||''}"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Status</label><select id="be-status"><option value="open" ${b.status==='open'?'selected':''}>Aangemaakt</option><option value="fabriek" ${b.status==='fabriek'?'selected':''}>Bij fabriek</option><option value="terug" ${b.status==='terug'?'selected':''}>Terug ontvangen</option></select></div>
+    <div style="margin-bottom:14px"><label>Opmerkingen</label><textarea id="be-opm">${b.opm||''}</textarea></div>
+    <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="slaBestellingEditOp('${bid}')">Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button></div>`);
+}
+async function slaBestellingEditOp(bid){
+  const updates={nummer:document.getElementById('be-nr').value.trim(),fabriek:document.getElementById('be-fab').value,datum:document.getElementById('be-datum').value,levering:document.getElementById('be-levering').value,status:document.getElementById('be-status').value,opm:document.getElementById('be-opm').value};
+  await sb.from('bestellingen').update(updates).eq('id',bid);
+  const b=cache.bestellingen.find(x=>x.id===bid);if(b)Object.assign(b,updates);
+  sluitModal();toast('✓ Bestelling bijgewerkt');renderBestelling(bid);
+}
+
+// ── STAART BEWERKEN ──
+function openSlaartEdit(sid,bid){
+  const s=cache.staarten.find(x=>x.id===sid);if(!s)return;
+  showModal(`<p style="font-weight:600;margin-bottom:14px">✏️ Staart bewerken — <span class="badge badge-purple">${s.nr}</span></p>
+    <div class="grid3" style="margin-bottom:10px">
+      <div><label>Nummer</label><input type="text" id="se-nr" value="${s.nr||''}"></div>
+      <div><label>Kleur</label><input type="text" id="se-kleur" value="${s.kleur||''}"></div>
+      <div><label>Gewicht (g)</label><input type="number" id="se-gew" value="${s.gewicht||''}"></div>
+    </div>
+    <div class="grid4" style="margin-bottom:10px">
+      <div><label>Lengte (cm)</label><input type="number" id="se-len" value="${s.lengte||''}"></div>
+      <div><label>Dikte</label><select id="se-dikte"><option value="">—</option><option ${s.dikte==='Dun'?'selected':''}>Dun</option><option ${s.dikte==='Medium'?'selected':''}>Medium</option><option ${s.dikte==='Dik'?'selected':''}>Dik</option></select></div>
+      <div><label>Structuur</label><select id="se-str"><option value="">—</option><option ${s.structuur==='Steil'?'selected':''}>Steil</option><option ${s.structuur==='Licht golf'?'selected':''}>Licht golf</option><option ${s.structuur==='Golvend'?'selected':''}>Golvend</option><option ${s.structuur==='Krullig'?'selected':''}>Krullig</option></select></div>
+      <div><label>Herkomst</label><input type="text" id="se-herk" value="${s.herkomst||''}"></div>
+    </div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Punt</label><select id="se-punt"><option value="">—</option><option ${s.punt==='Vol'?'selected':''}>Vol</option><option ${s.punt==='Half vol'?'selected':''}>Half vol</option><option ${s.punt==='Dun'?'selected':''}>Dun</option><option ${s.punt==='Zeer dun'?'selected':''}>Zeer dun</option></select></div>
+      <div><label>Inkoopprijs (€)</label><input type="number" id="se-prijs" value="${s.prijs||''}" step="0.01"></div>
+    </div>
+    <hr style="border:none;border-top:1px solid #e5e3dc;margin:12px 0">
+    <p style="font-size:13px;font-weight:600;margin-bottom:10px">Haar na verwerking</p>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Haar retour (g)</label><input type="number" id="se-retour" value="${s.haar_retour||''}" placeholder="bijv. 15" step="0.1"><p style="font-size:11px;color:#888;margin-top:3px">Haar terug maar te weinig voor weaving</p></div>
+      <div><label>Haar verloren (g)</label><input type="number" id="se-verloren" value="${s.haar_verloren||''}" placeholder="bijv. 10" step="0.1"><p style="font-size:11px;color:#888;margin-top:3px">Verloren tijdens het maken</p></div>
+    </div>
+    <div style="margin-bottom:14px"><label>Opmerking</label><textarea id="se-opm">${s.opm||''}</textarea></div>
+    <div class="row" style="gap:8px;justify-content:space-between">
+      <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="slaSlaartEditOp('${sid}','${bid}')">Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button></div>
+      <button class="btn btn-danger btn-sm" onclick="verwijderSlaart('${sid}','${bid}')">🗑️ Verwijderen</button>
+    </div>`);
+}
+async function slaSlaartEditOp(sid,bid){
+  const updates={nr:document.getElementById('se-nr').value.trim(),kleur:document.getElementById('se-kleur').value,gewicht:parseFloat(document.getElementById('se-gew').value)||0,lengte:document.getElementById('se-len').value,dikte:document.getElementById('se-dikte').value,structuur:document.getElementById('se-str').value,herkomst:document.getElementById('se-herk').value,punt:document.getElementById('se-punt').value,prijs:document.getElementById('se-prijs').value,haar_retour:parseFloat(document.getElementById('se-retour').value)||null,haar_verloren:parseFloat(document.getElementById('se-verloren').value)||null,opm:document.getElementById('se-opm').value};
+  await sb.from('staarten').update(updates).eq('id',sid);
+  const s=cache.staarten.find(x=>x.id===sid);if(s)Object.assign(s,updates);
+  sluitModal();toast('✓ Staart bijgewerkt');renderBestelling(bid);
+}
+async function verwijderSlaart(sid,bid){
+  if(!confirm('Weet je zeker dat je deze staart wilt verwijderen? Alle gekoppelde weavings worden ook verwijderd.'))return;
+  await sb.from('weavings').delete().eq('staart_id',sid);
+  await sb.from('staarten').delete().eq('id',sid);
+  cache.staarten=cache.staarten.filter(x=>x.id!==sid);
+  cache.weavings=cache.weavings.filter(x=>x.staart_id!==sid);
+  sluitModal();toast('✓ Staart verwijderd');renderBestelling(bid);
+}
+
+// ── STAART TOEVOEGEN AAN BESTAANDE BESTELLING ──
+let extraRijTeller=0;let extraFotoMap={};
+function openSlaartToevoegen(bid){
+  extraRijTeller=0;extraFotoMap={};
+  showModal(`<p style="font-weight:600;margin-bottom:14px">➕ Staart toevoegen aan bestelling</p>
+    <div id="extra-staart-rijen"></div>
+    <div class="row" style="margin-bottom:14px">
+      <button class="btn btn-sm" onclick="voegExtraRijToe()">+ Nog een staart</button>
+      <button class="btn btn-sm btn-danger" onclick="verwijderExtraRij()">− Verwijderen</button>
+    </div>
+    <div class="row" style="gap:8px"><button class="btn btn-primary" id="extra-opslaan-btn" onclick="slaExtraSlaartOp('${bid}')">💾 Toevoegen</button><button class="btn" onclick="sluitModal()">Annuleren</button><span id="extra-msg" style="font-size:13px"></span></div>`);
+  voegExtraRijToe();
+}
+
+function extraSlaartRijHTML(i){
+  return `<div class="staart-input-row" id="extra-rij-${i}">
+    <div style="font-size:12px;font-weight:600;color:#888;margin-bottom:8px">Staart ${i+1}</div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div><label>Nummer *</label><input type="text" id="ex-nr-${i}" placeholder="bijv. ST-019"></div>
+      <div><label>Kleur</label><input type="text" id="ex-kleur-${i}" placeholder="bijv. Zwart #1B"></div>
+      <div><label>Gewicht (g) *</label><input type="number" id="ex-gew-${i}" placeholder="250"></div>
+    </div>
+    <div class="grid4" style="margin-bottom:8px">
+      <div><label>Lengte (cm)</label><input type="number" id="ex-len-${i}" placeholder="60"></div>
+      <div><label>Dikte</label><select id="ex-dikte-${i}"><option value="">—</option><option>Dun</option><option>Medium</option><option>Dik</option></select></div>
+      <div><label>Structuur</label><select id="ex-str-${i}"><option value="">—</option><option>Steil</option><option>Licht golf</option><option>Golvend</option><option>Krullig</option></select></div>
+      <div><label>Herkomst</label><input type="text" id="ex-herk-${i}" placeholder="India"></div>
+    </div>
+    <div class="grid4" style="margin-bottom:8px">
+      <div><label>Punt</label><select id="ex-punt-${i}"><option value="">—</option><option>Vol</option><option>Half vol</option><option>Dun</option><option>Zeer dun</option></select></div>
+      <div><label>Inkoopprijs (€)</label><input type="number" id="ex-prijs-${i}" step="0.01" placeholder="45.00"></div>
+      <div><label>Foto</label>
+        <div class="foto-upload-box" id="extra-foto-box-${i}">
+          <input type="file" accept="image/*" onchange="laadExtraFoto(${i},this)">
+          <span style="font-size:18px">📷</span>
+          <span style="font-size:11px;color:#888">Foto toevoegen</span>
+        </div>
+      </div>
+      <div><label>Opmerking</label><textarea id="ex-opm-${i}" placeholder="..."></textarea></div>
+    </div>
+  </div>`;
+}
+
+async function laadExtraFoto(i,input){
+  if(!input.files[0])return;
+  const b64=await fotoNaarBase64(input.files[0]);
+  extraFotoMap[i]=b64;
+  const box=document.getElementById('extra-foto-box-'+i);
+  box.innerHTML=`<input type="file" accept="image/*" onchange="laadExtraFoto(${i},this)"><img src="${b64}" style="width:100%;height:50px;object-fit:cover;border-radius:8px"><span style="font-size:10px;color:#888">Wijzigen</span>`;
+}
+
+function voegExtraRijToe(){document.getElementById('extra-staart-rijen')?.insertAdjacentHTML('beforeend',extraSlaartRijHTML(extraRijTeller));extraRijTeller++;}
+function verwijderExtraRij(){if(extraRijTeller<=1)return;extraRijTeller--;document.getElementById('extra-rij-'+extraRijTeller)?.remove();}
+
+async function slaExtraSlaartOp(bid){
+  let nieuw=[];let fout=false;
+  for(let i=0;i<extraRijTeller;i++){
+    const el=document.getElementById('extra-rij-'+i);if(!el)continue;
+    const snr=document.getElementById('ex-nr-'+i)?.value.trim();
+    const gew=document.getElementById('ex-gew-'+i)?.value;
+    if(!snr||!gew){fout=true;break;}
+    nieuw.push({id:'s_'+Date.now()+'_'+i,bestel_id:bid,nr:snr,kleur:document.getElementById('ex-kleur-'+i)?.value||'',gewicht:parseFloat(gew),lengte:document.getElementById('ex-len-'+i)?.value||'',dikte:document.getElementById('ex-dikte-'+i)?.value||'',structuur:document.getElementById('ex-str-'+i)?.value||'',herkomst:document.getElementById('ex-herk-'+i)?.value||'',punt:document.getElementById('ex-punt-'+i)?.value||'',prijs:document.getElementById('ex-prijs-'+i)?.value||'',opm:document.getElementById('ex-opm-'+i)?.value||'',foto:extraFotoMap[i]||null});
+  }
+  if(fout||!nieuw.length){document.getElementById('extra-msg').innerHTML='<span class="warn">Vul nummer en gewicht in</span>';return;}
+  const btn=document.getElementById('extra-opslaan-btn');btn.disabled=true;btn.textContent='Opslaan...';
+  await sb.from('staarten').insert(nieuw);
+  cache.staarten.push(...nieuw);
+  sluitModal();toast('✓ '+nieuw.length+' staart(en) toegevoegd!');renderBestelling(bid);
+}
+
+// ── WEAVING VERWIJDEREN ──
+async function verwijderWeaving(wid,bid){
+  if(!confirm('Weet je zeker dat je deze weaving wilt verwijderen?'))return;
+  await sb.from('weavings').delete().eq('id',wid);
+  cache.weavings=cache.weavings.filter(x=>x.id!==wid);
+  sluitModal();toast('✓ Weaving verwijderd');renderBestelling(bid);
+}
+
+// ── FOTO ──
+function openFotoUpload(staartId,bestelId,veld='foto'){
+  showModal(`<p style="font-weight:600;margin-bottom:14px">📷 ${veld==='foto'?'Foto 1':'Foto 2'} toevoegen / wijzigen</p>
+    <div class="foto-upload-box" style="min-height:120px">
+      <input type="file" accept="image/*" onchange="slaFotoOp('${staartId}','${bestelId}','${veld}',this)">
+      <span style="font-size:36px">📷</span>
+      <span style="font-size:13px;color:#888">Klik om foto te selecteren</span>
+    </div>
+    <button class="btn" style="margin-top:14px" onclick="sluitModal()">Annuleren</button>`);
+}
+async function slaFotoOp(sid,bid,veld,input){
+  if(!input.files[0])return;
+  const b64=await fotoNaarBase64(input.files[0]);
+  const updates={};updates[veld]=b64;
+  await sb.from('staarten').update(updates).eq('id',sid);
+  const s=cache.staarten.find(x=>x.id===sid);
+  if(s)s[veld]=b64;
+  sluitModal();toast('✓ Foto opgeslagen');renderBestelling(bid);
+}
+function toonFotoModal(sid){
+  const s=cache.staarten.find(x=>x.id===sid);if(!s||(!s.foto&&!s.foto2))return;
+  showModal(`<p style="font-weight:600;margin-bottom:12px">Foto's — <span class="badge badge-purple">${s.nr}</span></p>
+    ${s.foto?`<img src="${s.foto}" style="width:100%;border-radius:10px;margin-bottom:10px;cursor:pointer" onclick="toonFotoGroot('${sid}','foto')" alt="foto 1">`:''}
+    ${s.foto2?`<img src="${s.foto2}" style="width:100%;border-radius:10px;margin-bottom:10px;cursor:pointer" onclick="toonFotoGroot('${sid}','foto2')" alt="foto 2">`:''}
+    <div class="row" style="gap:8px;margin-top:4px">
+      <button class="btn btn-sm" onclick="openFotoUpload('${sid}','${s.bestel_id}','foto')">📷 ${s.foto?'Foto 1 wijzigen':'Foto 1 toevoegen'}</button>
+      <button class="btn btn-sm" onclick="openFotoUpload('${sid}','${s.bestel_id}','foto2')">📷 ${s.foto2?'Foto 2 wijzigen':'Foto 2 toevoegen'}</button>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="sluitModal()">Sluiten</button>`);
+}
+
+function toonFotoGroot(sid, veld){
+  const s=cache.staarten.find(x=>x.id===sid);if(!s)return;
+  const foto=veld==='foto'?s.foto:s.foto2;if(!foto)return;
+  showModal(`<img src="${foto}" style="width:100%;border-radius:10px;margin-bottom:12px" alt="foto">
+    <button class="btn" onclick="toonFotoModal('${sid}')">← Terug</button>`);
+}
+
+function toonFotoGrootUrl(url){
+  showModal(`<img src="${url}" style="width:100%;border-radius:10px;margin-bottom:12px" alt="foto staart">
+    <button class="btn" onclick="sluitModal()">Sluiten</button>`);
+}
+function showModal(html){document.getElementById('modal-container').innerHTML=`<div class="modal-bg" onclick="if(event.target===this)sluitModal()"><div class="modal-box">${html}</div></div>`;}
+function sluitModal(){document.getElementById('modal-container').innerHTML='';}
+
+// ── OPMERKINGEN ──
+function openSlaartOpmForm(sid,bid){
+  const s=cache.staarten.find(x=>x.id===sid);if(!s)return;
+  showModal(`<p style="font-weight:600;margin-bottom:4px">Opmerking — <span class="badge badge-purple">${s.nr}</span></p>
+    <p style="font-size:12px;color:#888;margin-bottom:12px">Zichtbaar in het overzicht en bij code-lookup.</p>
+    <textarea id="opm-input" style="min-height:80px;margin-bottom:14px">${s.opm||''}</textarea>
+    <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="slaSlaartOpmOp('${sid}','${bid}')">Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button></div>`);
+}
+async function slaSlaartOpmOp(sid,bid){
+  const opm=document.getElementById('opm-input').value;
+  await sb.from('staarten').update({opm}).eq('id',sid);
+  const s=cache.staarten.find(x=>x.id===sid);if(s)s.opm=opm;
+  sluitModal();toast('✓ Opmerking opgeslagen');renderBestelling(bid);
+}
+
+// ── WEAVING INVOEREN ──
+let wRijTeller=0;
+function openWeavingForm(bestelId,staartId){
+  const s=cache.staarten.find(x=>x.id===staartId);
+  const bestaand=cache.weavings.filter(w=>w.staart_id===staartId).reduce((a,w)=>a+(parseFloat(w.gewicht)||0),0);
+  wRijTeller=1;
+  const container=document.getElementById('weaving-form-container');
+  container.innerHTML=`
+    <hr class="divider">
+    <p class="sec-title">Weavings invoeren voor <span class="badge badge-purple">${s.nr}</span></p>
+    <div class="grid3" style="margin-bottom:16px">
+      <div class="stat"><div class="stat-val">${s.gewicht}g</div><div class="stat-lbl">Origineel gewicht</div></div>
+      <div class="stat"><div class="stat-val">${bestaand.toFixed(1)}g</div><div class="stat-lbl">Al geregistreerd</div></div>
+      <div class="stat"><div id="w-nieuw-live" class="stat-val">—</div><div class="stat-lbl">Nieuw in te voeren</div></div>
+    </div>
+    <div id="w-rijen">${weavingRijHTML(0)}</div>
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn btn-sm" onclick="voegWRijToe()">+ Nog een weaving</button>
+      <button class="btn btn-sm btn-danger" onclick="verwijderWRij()">− Verwijderen</button>
+    </div>
+    <div class="row"><button class="btn btn-primary" id="w-opslaan-btn" onclick="slaWeavingsOp('${bestelId}','${staartId}')">💾 Opslaan</button><button class="btn" onclick="document.getElementById('weaving-form-container').innerHTML=''">Annuleren</button><span id="w-msg" style="font-size:13px;margin-left:8px"></span></div>`;
+  container.scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function weavingRijHTML(i){
+  return `<div class="staart-input-row" id="w-rij-${i}">
+    <div style="font-size:12px;font-weight:600;color:#888;margin-bottom:10px">Weaving ${i+1}</div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div><label>Code *</label><input type="text" id="wr-code-${i}" placeholder="bijv. W-001-A" oninput="updateNieuwLive()"></div>
+      <div><label>Gewicht (g) *</label><input type="number" id="wr-gew-${i}" placeholder="80" oninput="updateNieuwLive()"></div>
+      <div><label>Lengte (cm)</label><input type="number" id="wr-len-${i}" placeholder="60"></div>
+    </div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div><label>Breedte (cm)</label><input type="number" id="wr-weft-${i}" value="30" placeholder="30"></div>
+      <div><label>Kwaliteit</label><select id="wr-kw-${i}"><option value="">—</option><option>A</option><option>B</option><option>C</option></select></div>
+      <div><label>Status</label><select id="wr-status-${i}"><option value="beschikbaar">Beschikbaar</option><option value="gereserveerd">Gereserveerd</option><option value="verkocht">Verkocht</option></select></div>
+    </div>
+    <div class="grid3">
+      <div><label>Salon naam</label><input type="text" id="wr-salon-${i}" placeholder="bijv. Salon Bella"></div>
+      <div><label>Klant naam</label><input type="text" id="wr-klant-${i}" placeholder="bijv. Sarah de Vries"></div>
+      <div><label>Opmerking</label><input type="text" id="wr-opm-${i}" placeholder="bijv. lichte kleurvariatie..."></div>
+    </div>
+  </div>`;
+}
+
+function updateNieuwLive(){
+  let tot=0;for(let i=0;i<wRijTeller;i++)tot+=parseFloat(document.getElementById('wr-gew-'+i)?.value)||0;
+  const el=document.getElementById('w-nieuw-live');if(el&&tot>0)el.textContent=tot.toFixed(1)+'g';
+}
+function voegWRijToe(){document.getElementById('w-rijen')?.insertAdjacentHTML('beforeend',weavingRijHTML(wRijTeller));wRijTeller++;}
+function verwijderWRij(){if(wRijTeller<=1)return;wRijTeller--;document.getElementById('w-rij-'+wRijTeller)?.remove();}
+
+async function slaWeavingsOp(bestelId,staartId){
+  let nieuw=[];let fout=false;
+  for(let i=0;i<wRijTeller;i++){
+    const code=document.getElementById('wr-code-'+i)?.value.trim();
+    const gew=document.getElementById('wr-gew-'+i)?.value;
+    if(!code||!gew){fout=true;break;}
+    if(cache.weavings.find(w=>w.code===code)){document.getElementById('w-msg').innerHTML=`<span class="warn">Code ${code} bestaat al</span>`;return;}
+    nieuw.push({id:'w_'+Date.now()+'_'+i,code,bestel_id:bestelId,staart_id:staartId,gewicht:parseFloat(gew),lengte:document.getElementById('wr-len-'+i)?.value||'',weft:document.getElementById('wr-weft-'+i)?.value||'',weft_verkocht:parseFloat(document.getElementById('wr-weft-vk-'+i)?.value)||null,kwaliteit:document.getElementById('wr-kw-'+i)?.value||'',status:document.getElementById('wr-status-'+i)?.value||'beschikbaar',prijs:document.getElementById('wr-prijs-'+i)?.value||'',salon:document.getElementById('wr-salon-'+i)?.value||'',klant:document.getElementById('wr-klant-'+i)?.value||'',opm:document.getElementById('wr-opm-'+i)?.value||'',datum:new Date().toLocaleDateString('nl-NL')});
+  }
+  if(fout){document.getElementById('w-msg').innerHTML='<span class="warn">Vul code en gewicht in</span>';return;}
+  const btn=document.getElementById('w-opslaan-btn');btn.disabled=true;btn.textContent='Opslaan...';
+  try{
+    await sb.from('weavings').insert(nieuw);
+    cache.weavings.push(...nieuw);
+    toast('✓ '+nieuw.length+' weaving(s) opgeslagen!');
+    document.getElementById('weaving-form-container').innerHTML='';
+    renderBestelling(bestelId);
+    setTimeout(()=>{const body=document.getElementById('sb-'+staartId);const chev=document.getElementById('chev-'+staartId);if(body&&!body.classList.contains('open')){body.classList.add('open');if(chev)chev.classList.add('open');}},100);
+  }catch(e){document.getElementById('w-msg').innerHTML='<span class="warn">Fout: '+e.message+'</span>';btn.disabled=false;btn.textContent='💾 Opslaan';}
+}
+
+// ── WEAVING BEWERKEN ──
+function openWeavingEdit(wid,bid){
+  const w=cache.weavings.find(x=>x.id===wid);if(!w)return;
+  showModal(`<p style="font-weight:600;margin-bottom:14px">Weaving bewerken — <span class="badge badge-teal">${w.code}</span></p>
+    <div style="margin-bottom:10px"><label>Code</label><input type="text" id="we-code" value="${w.code||''}"><p style="font-size:11px;color:#888;margin-top:3px">Let op: zorg dat de code uniek blijft</p></div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Gewicht (g)</label><input type="number" id="we-gew" value="${w.gewicht}"></div>
+      <div><label>Lengte (cm)</label><input type="number" id="we-len" value="${w.lengte||''}"></div>
+    </div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Breedte (cm)</label><input type="number" id="we-weft" value="${w.weft||'30'}"><p style="font-size:11px;color:#888;margin-top:3px">Standaard 30cm</p></div>
+      <div><label>Kwaliteit</label><select id="we-kw"><option value="">—</option><option ${w.kwaliteit==='A'?'selected':''}>A</option><option ${w.kwaliteit==='B'?'selected':''}>B</option><option ${w.kwaliteit==='C'?'selected':''}>C</option></select></div>
+    </div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Verkoopprijs (€)</label><input type="number" id="we-prijs" value="${w.prijs||''}" step="0.01"></div>
+      <div><label>Status</label><select id="we-status"><option value="beschikbaar" ${(!w.status||w.status==='beschikbaar')?'selected':''}>Beschikbaar</option><option value="gereserveerd" ${w.status==='gereserveerd'?'selected':''}>Gereserveerd</option><option value="verkocht" ${w.status==='verkocht'?'selected':''}>Verkocht</option></select></div>
+    </div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Salon naam</label><input type="text" id="we-salon" value="${w.salon||''}" placeholder="bijv. Salon Bella"></div>
+      <div><label>Klant naam</label><input type="text" id="we-klant" value="${w.klant||''}" placeholder="bijv. Sarah de Vries"></div>
+    </div>
+    <div style="margin-bottom:14px"><label>Opmerking</label><textarea id="we-opm">${w.opm||''}</textarea></div>
+    <div class="row" style="gap:8px;justify-content:space-between">
+      <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="slaWeavingEditOp('${wid}','${bid}')">Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button></div>
+      <button class="btn btn-danger btn-sm" onclick="verwijderWeaving('${wid}','${bid}')">🗑️ Verwijderen</button>
+    </div>`);
+}
+async function slaWeavingEditOp(wid,bid){
+  const updates={code:document.getElementById('we-code')?.value.trim()||w.code,gewicht:parseFloat(document.getElementById('we-gew')?.value)||0,lengte:document.getElementById('we-len')?.value||'',weft:document.getElementById('we-weft')?.value||'',weft_verkocht:parseFloat(document.getElementById('we-weft-vk')?.value)||null,kwaliteit:document.getElementById('we-kw')?.value||'',status:document.getElementById('we-status')?.value||'beschikbaar',prijs:document.getElementById('we-prijs')?.value||'',salon:document.getElementById('we-salon')?.value||'',klant:document.getElementById('we-klant')?.value||'',opm:document.getElementById('we-opm')?.value||''};
+  await sb.from('weavings').update(updates).eq('id',wid);
+  const w=cache.weavings.find(x=>x.id===wid);if(w)Object.assign(w,updates);
+  sluitModal();toast('✓ Weaving bijgewerkt');renderBestelling(bid);
+  setTimeout(()=>{const body=document.getElementById('sb-'+w?.staart_id);const chev=document.getElementById('chev-'+w?.staart_id);if(body&&!body.classList.contains('open')){body.classList.add('open');if(chev)chev.classList.add('open');}},100);
+}
+
+// ── VOORRAAD ──
+async function renderVoorraad(){
+  const filterStatus=document.getElementById('filter-status')?.value||'';
+  const filterKw=document.getElementById('filter-kw')?.value||'';
+  const filterZoek=(document.getElementById('filter-zoek')?.value||'').toLowerCase().trim();
+  const filterLengte=parseFloat(document.getElementById('filter-lengte')?.value)||0;
+  const filterStructuur=document.getElementById('filter-structuur')?.value||'';
+  
+  syncBar('⟳ Voorraad laden...');
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+  try{
+    const [wData,sData,bData]=await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/weavings?select=*&order=created_at.asc`,{headers}).then(r=>r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/staarten?select=*`,{headers}).then(r=>r.json()),
+      fetch(`${SUPABASE_URL}/rest/v1/bestellingen?select=*`,{headers}).then(r=>r.json())
+    ]);
+    if(Array.isArray(wData))cache.weavings=wData;
+    if(Array.isArray(sData))cache.staarten=sData;
+    if(Array.isArray(bData))cache.bestellingen=bData;
+  }catch(e){toast('❌ Fout bij laden voorraad');}
+  syncBar(null);
+
+  let weavings=cache.weavings.filter(w=>{
+    if(filterStatus&&(w.status||'beschikbaar')!==filterStatus)return false;
+    if(filterKw&&w.kwaliteit!==filterKw)return false;
+    if(filterLengte&&(parseFloat(w.lengte)||0)<filterLengte)return false;
+    if(filterStructuur){
+      const s=cache.staarten.find(x=>x.id===w.staart_id);
+      if(!s||s.structuur!==filterStructuur)return false;
+    }
+    if(filterZoek){
+      const s=cache.staarten.find(x=>x.id===w.staart_id);
+      const kleur=(s?.kleur||'').toLowerCase();
+      const herkomst=(s?.herkomst||'').toLowerCase();
+      const structuur=(s?.structuur||'').toLowerCase();
+      const dikte=(s?.dikte||'').toLowerCase();
+      const code=(w.code||'').toLowerCase();
+      const klant=(w.klant||'').toLowerCase();
+      const salon=(w.salon||'').toLowerCase();
+      const opm=(w.opm||'').toLowerCase();
+      const velden=[kleur,herkomst,structuur,dikte,code,klant,salon,opm];
+      const exactMatch=velden.some(v=>v===filterZoek);
+      const startsMatch=velden.some(v=>v.startsWith(filterZoek));
+      if(!exactMatch&&!startsMatch)return false;
+    }
+    return true;
+  });
+  const totaal=cache.weavings.length;
+  const beschikbaar=cache.weavings.filter(w=>!w.status||w.status==='beschikbaar').length;
+  const gereserveerd=cache.weavings.filter(w=>w.status==='gereserveerd').length;
+  const verkocht=cache.weavings.filter(w=>w.status==='verkocht').length;
+  document.getElementById('voorraad-stats').innerHTML=`
+    <div class="stat"><div class="stat-val">${totaal}</div><div class="stat-lbl">Totaal weavings</div></div>
+    <div class="stat"><div class="stat-val" style="color:#085041">${beschikbaar}</div><div class="stat-lbl">Beschikbaar</div></div>
+    <div class="stat"><div class="stat-val" style="color:#633806">${gereserveerd}</div><div class="stat-lbl">Gereserveerd</div></div>
+    <div class="stat"><div class="stat-val" style="color:#444">${verkocht}</div><div class="stat-lbl">Verkocht</div></div>`;
+  const el=document.getElementById('voorraad-lijst');
+  if(!weavings.length){el.innerHTML='<div class="empty-state"><div style="font-size:48px;margin-bottom:12px">🧶</div><p>Geen weavings gevonden.</p></div>';return;}
+  let html='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e5e3dc"><thead><tr style="background:#f9f8f5">';
+  ['Code','Staart','Kleur','Herkomst','Gewicht','Lengte','Breedte','Kwaliteit','Status','Prijs','Klant','Bestelling'].forEach(h=>html+=`<th style="text-align:left;padding:10px 14px;border-bottom:1px solid #e5e3dc;font-size:12px;color:#666;white-space:nowrap">${h}</th>`);
+  html+='</tr></thead><tbody>';
+  weavings.forEach(w=>{
+    const s=cache.staarten.find(x=>x.id===w.staart_id);
+    const b=cache.bestellingen.find(x=>x.id===w.bestel_id);
+    html+=`<tr style="border-bottom:1px solid #f0eeea">
+      <td style="padding:10px 14px"><span class="badge badge-teal">${w.code}</span></td>
+      <td style="padding:10px 14px"><span class="badge badge-purple">${s?s.nr:'—'}</span></td>
+      <td style="padding:10px 14px;font-size:13px">${s?s.kleur||'—':'—'}</td>
+      <td style="padding:10px 14px;font-size:13px">${s?s.herkomst||'—':'—'}</td>
+      <td style="padding:10px 14px;font-size:13px">${w.gewicht}g</td>
+      <td style="padding:10px 14px;font-size:13px">${w.lengte?w.lengte+'cm':'—'}</td>
+      <td style="padding:10px 14px;font-size:13px">${w.weft?w.weft+'cm':'—'}</td>
+      <td style="padding:10px 14px">${w.kwaliteit?`<span class="badge kw-${w.kwaliteit}">${w.kwaliteit}</span>`:'—'}</td>
+      <td style="padding:10px 14px">${wStatusBadge(w.status)}</td>
+      <td style="padding:10px 14px;font-size:13px">${w.prijs?'€'+parseFloat(w.prijs).toFixed(2):'—'}</td>
+      <td style="padding:10px 14px;font-size:13px">${w.klant||'—'}</td>
+      <td style="padding:10px 14px"><span class="badge badge-blue">${b?b.nummer:'—'}</span></td>
+    </tr>`;
+  });
+  html+='</tbody></table></div>';
+  el.innerHTML=html;
+}
+
+// ── ZOEK OP NAAM ──
+async function zoekOpNaam(){
+  const klant=(document.getElementById('lookup-klant')?.value||'').trim();
+  const salon=(document.getElementById('lookup-salon')?.value||'').trim();
+  const res=document.getElementById('lookup-result');
+  if(!klant&&!salon){res.innerHTML='';return;}
+  if((klant&&klant.length<2)||(salon&&salon.length<2)){res.innerHTML='<p style="color:#888;font-size:14px">Typ minimaal 2 letters...</p>';return;}
+  res.innerHTML='<p style="color:#888;font-size:14px">Zoeken...</p>';
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+  try{
+    let url=`${SUPABASE_URL}/rest/v1/weavings?select=*&order=created_at.desc`;
+    if(klant) url+=`&klant=ilike.*${encodeURIComponent(klant)}*`;
+    if(salon) url+=`&salon=ilike.*${encodeURIComponent(salon)}*`;
+    const wData=await fetch(url,{headers}).then(r=>r.json());
+    if(!Array.isArray(wData)||!wData.length){res.innerHTML='<p style="color:#888;font-size:14px">Geen weavings gevonden.</p>';return;}
+    let html='';
+    for(const w of wData){
+      const sData=await fetch(`${SUPABASE_URL}/rest/v1/staarten?id=eq.${encodeURIComponent(w.staart_id)}&select=*`,{headers}).then(r=>r.json());
+      const s=Array.isArray(sData)&&sData.length?sData[0]:null;
+      const bData=await fetch(`${SUPABASE_URL}/rest/v1/bestellingen?id=eq.${encodeURIComponent(w.bestel_id)}&select=*`,{headers}).then(r=>r.json());
+      const b=Array.isArray(bData)&&bData.length?bData[0]:null;
+      html+=`<div class="lookup-result" style="margin-bottom:12px">
+        <div class="row" style="margin-bottom:10px;gap:8px;flex-wrap:wrap">
+          <span class="badge badge-teal">${w.code}</span>${wStatusBadge(w.status)}${kwBadge(w.kwaliteit)}${b?`<span class="badge badge-blue">${b.nummer}</span>`:''}
+        </div>
+        ${s&&s.foto?`<img src="${s.foto}" class="foto-thumb-lg" style="cursor:pointer" onclick="toonFotoGrootUrl('${s.foto}')" alt="foto">`:''}
+        <div class="detail-row"><span class="detail-key">Gewicht</span><span>${w.gewicht}g</span></div>
+        ${w.lengte?`<div class="detail-row"><span class="detail-key">Lengte</span><span>${w.lengte}cm</span></div>`:''}
+        ${w.salon?`<div class="detail-row"><span class="detail-key">Salon</span><span>${w.salon}</span></div>`:''}
+        ${w.klant?`<div class="detail-row"><span class="detail-key">Klant</span><span>${w.klant}</span></div>`:''}
+        ${w.prijs?`<div class="detail-row"><span class="detail-key">Verkoopprijs</span><span>€${parseFloat(w.prijs).toFixed(2)}</span></div>`:''}
+        ${s?`<div class="detail-row"><span class="detail-key">Kleur staart</span><span>${s.kleur||'—'}</span></div>
+        <div class="detail-row"><span class="detail-key">Herkomst</span><span>${s.herkomst||'—'}</span></div>`:''}
+      </div>`;
+    }
+    res.innerHTML=html;
+  }catch(e){res.innerHTML='<p style="color:#c0392b;font-size:14px">Fout bij zoeken: '+e.message+'</p>';}
+}
+
+// ── LOOKUP ──
+async function zoekWeaving(){
+  const code=document.getElementById('lookup-input').value.trim();
+  const res=document.getElementById('lookup-result');
+  if(!code){res.innerHTML='';return;}
+  res.innerHTML='<p style="color:#888;font-size:14px">Zoeken...</p>';
+  try{
+    const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+    const wData=await fetch(`${SUPABASE_URL}/rest/v1/weavings?code=ilike.${encodeURIComponent(code)}&select=*`,{headers}).then(r=>r.json());
+    const w=Array.isArray(wData)&&wData.length?wData[0]:null;
+    if(!w){res.innerHTML='<p style="color:#888;font-size:14px">Geen weaving gevonden met deze code.</p>';return;}
+    const sData=await fetch(`${SUPABASE_URL}/rest/v1/staarten?id=eq.${encodeURIComponent(w.staart_id)}&select=*`,{headers}).then(r=>r.json());
+    const s=Array.isArray(sData)&&sData.length?sData[0]:null;
+    const bData=await fetch(`${SUPABASE_URL}/rest/v1/bestellingen?id=eq.${encodeURIComponent(w.bestel_id)}&select=*`,{headers}).then(r=>r.json());
+    const b=Array.isArray(bData)&&bData.length?bData[0]:null;
+    res.innerHTML=`<div class="lookup-result">
+      <div class="row" style="margin-bottom:14px;gap:8px;flex-wrap:wrap">
+        <span class="badge badge-teal">${w.code}</span>${wStatusBadge(w.status)}${kwBadge(w.kwaliteit)}${b?`<span class="badge badge-blue">${b.nummer}</span>`:''}
+      </div>
+      ${s&&s.foto?`<img src="${s.foto}" class="foto-thumb-lg" alt="foto staart" style="cursor:pointer" onclick="toonFotoGrootUrl('${s.foto}')">`:''}
+      ${s&&s.foto2?`<img src="${s.foto2}" class="foto-thumb-lg" alt="foto staart 2" style="cursor:pointer;margin-top:8px" onclick="toonFotoGrootUrl('${s.foto2}')">`:''}
+      <p style="font-size:13px;font-weight:600;margin-bottom:10px">Weaving details</p>
+      <div class="detail-row"><span class="detail-key">Gewicht</span><span>${w.gewicht}g</span></div>
+      ${w.lengte?`<div class="detail-row"><span class="detail-key">Lengte</span><span>${w.lengte}cm</span></div>`:''}
+      ${w.weft?`<div class="detail-row"><span class="detail-key">Breedte</span><span>${w.weft}cm</span></div>`:''}
+      ${w.kwaliteit?`<div class="detail-row"><span class="detail-key">Kwaliteit</span><span>${w.kwaliteit}</span></div>`:''}
+      ${w.prijs?`<div class="detail-row"><span class="detail-key">Verkoopprijs</span><span>€${parseFloat(w.prijs).toFixed(2)}</span></div>`:''}
+      ${w.salon?`<div class="detail-row"><span class="detail-key">Salon</span><span>${w.salon}</span></div>`:''}
+      ${w.klant?`<div class="detail-row"><span class="detail-key">Klant</span><span>${w.klant}</span></div>`:''}
+      ${w.opm?`<div class="detail-row"><span class="detail-key">Opmerking</span><span>${w.opm}</span></div>`:''}
+      <div class="detail-row"><span class="detail-key">Geregistreerd</span><span>${w.datum}</span></div>
+      ${s?`<hr class="divider"><p style="font-size:13px;font-weight:600;margin-bottom:10px">Originele staart (${s.nr})</p>
+      <div class="detail-row"><span class="detail-key">Kleur</span><span>${s.kleur||'—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Herkomst</span><span>${s.herkomst||'—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Lengte</span><span>${s.lengte?s.lengte+'cm':'—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Gewicht</span><span>${s.gewicht}g</span></div>
+      <div class="detail-row"><span class="detail-key">Dikte</span><span>${s.dikte||'—'}</span></div>
+      <div class="detail-row"><span class="detail-key">Structuur</span><span>${s.structuur||'—'}</span></div>
+      ${s.punt?`<div class="detail-row"><span class="detail-key">Punt</span><span>${s.punt}</span></div>`:''}
+      ${s.opm?`<div class="detail-row"><span class="detail-key">Opmerking staart</span><span>${s.opm}</span></div>`:''}`:''}
+    </div>`;
+  }catch(e){res.innerHTML='<p style="color:#c0392b;font-size:14px">Fout bij zoeken: '+e.message+'</p>';}
+}
+
+// ── HAARWERKEN ──
+async function laadHaarwerken(bestelId){
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+  const veiligFetch=async(url)=>{try{const r=await fetch(url,{headers});if(!r.ok)return[];const d=await r.json();return Array.isArray(d)?d:[];}catch(e){return[];}};
+  const [h,hs]=await Promise.all([
+    veiligFetch(`${SUPABASE_URL}/rest/v1/haarwerken?bestel_id=eq.${encodeURIComponent(bestelId)}&select=*&order=created_at.asc`),
+    veiligFetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten?bestel_id=eq.${encodeURIComponent(bestelId)}&select=*&order=created_at.asc`)
+  ]);
+  cache.haarwerken=cache.haarwerken.filter(x=>x.bestel_id!==bestelId);cache.haarwerken.push(...h);
+  cache.hwStaarten=cache.hwStaarten.filter(x=>x.bestel_id!==bestelId);cache.hwStaarten.push(...hs);
+  renderHaarwerken(bestelId);
+}
+
+function toggleHW(hwId){
+  const body=document.getElementById('hwb-'+hwId);
+  const chev=document.getElementById('hwchev-'+hwId);
+  if(!body)return;
+  const open=body.classList.toggle('open');
+  if(chev)chev.classList.toggle('open',open);
+}
+
+function renderHaarwerken(bestelId){
+  const el=document.getElementById('haarwerk-lijst-'+bestelId);if(!el)return;
+  const hwStaarten=cache.hwStaarten.filter(s=>s.bestel_id===bestelId);
+  const haarwerken=cache.haarwerken.filter(h=>h.bestel_id===bestelId);
+  if(!hwStaarten.length&&!haarwerken.length){
+    el.innerHTML='<p style="color:#888;font-size:13px">Nog geen staarten voor haarwerken toegevoegd.</p>';
+    return;
+  }
+  const statusKleur={'in productie':'#E6F1FB','klaar':'#FAEEDA','geleverd':'#E1F5EE'};
+  const statusTekstKleur={'in productie':'#0C447C','klaar':'#633806','geleverd':'#085041'};
+
+  // Groepeer haarwerken per staart
+  let html='';
+  // Toon losse haarwerken (zonder staart)
+  const haarwerkenZonderSlaart=haarwerken.filter(h=>!hwStaarten.some(s=>s.haarwerk_id===h.id));
+  // Toon staarten met gekoppelde haarwerken
+  hwStaarten.forEach(s=>{
+    const hw=haarwerken.filter(h=>h.id===s.haarwerk_id);
+    const hwInfo=hw.length?hw[0]:null;
+    html+=`<div class="staart-blok">
+      <div class="staart-header" onclick="toggleHW('${s.id}')">
+        <div class="row" style="gap:12px;flex:1;min-width:0">
+          ${s.foto
+            ?`<img src="${s.foto}" class="foto-thumb" onclick="event.stopPropagation();toonFotoGrootUrl('${s.foto}')" alt="foto">`
+            :`<div style="width:46px;height:46px;border-radius:8px;background:#f5f4f0;border:1px dashed #ccc;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;font-size:20px" onclick="event.stopPropagation();openHWFotoUpload('${s.id}','${bestelId}')">📷</div>`}
+          <div style="flex:1;min-width:0">
+            <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:4px">
+              <span class="badge badge-purple">${s.nr}</span>
+              ${s.kleur?`<span style="font-size:12px;color:#666">${s.kleur}</span>`:''}
+              ${s.herkomst?`<span style="font-size:12px;color:#666">${s.herkomst}</span>`:''}
+              ${hwInfo?`<span style="font-size:12px;padding:2px 8px;border-radius:100px;background:${statusKleur[hwInfo.status]||'#f1efe8'};color:${statusTekstKleur[hwInfo.status]||'#444'}">${hwInfo.type||'Haarwerk'} — ${hwInfo.status||'in productie'}</span>`:''}
+            </div>
+            <div style="font-size:12px;color:#888;display:flex;gap:10px;flex-wrap:wrap">
+              <span>${s.gewicht}g</span>
+              ${s.lengte?`<span>${s.lengte}cm</span>`:''}
+              ${s.dikte?`<span>${s.dikte}</span>`:''}
+              ${s.structuur?`<span>${s.structuur}</span>`:''}
+            </div>
+          </div>
+        </div>
+        <div class="row" style="gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
+          <button class="btn btn-sm" onclick="openHWFotoUpload('${s.id}','${bestelId}')">📷</button>
+          <button class="btn btn-sm" onclick="openHWSlaartEdit('${s.id}','${bestelId}')">✏️</button>
+          ${hwInfo?`<button class="btn btn-sm" onclick="openHaarkwerkEdit('${hwInfo.id}','${bestelId}')">💇 Bewerken</button>`:`<button class="btn btn-sm btn-primary" onclick="openNieuwHaarwerkVoorSlaart('${s.id}','${bestelId}')">+ Haarwerk</button>`}
+        </div>
+        <span class="chevron" id="hwchev-${s.id}">▾</span>
+      </div>
+      <div class="staart-body" id="hwb-${s.id}">
+        ${hwInfo?`<div style="padding:14px 16px">
+          <div style="font-size:12px;color:#666;display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+            ${hwInfo.klant?`<span>👤 ${hwInfo.klant}</span>`:''}
+            ${hwInfo.salon?`<span>🏠 ${hwInfo.salon}</span>`:''}
+            ${hwInfo.prijs?`<span>💶 €${parseFloat(hwInfo.prijs).toFixed(2)}</span>`:''}
+            ${hwInfo.omtrek?`<span>⭕ Omtrek: ${hwInfo.omtrek}</span>`:''}
+            ${hwInfo.lengte?`<span>📏 Lengte: ${hwInfo.lengte}</span>`:''}
+          </div>
+          ${hwInfo.materiaal?`<div class="opm-bubble" style="margin-bottom:8px"><strong>Materiaal:</strong> ${hwInfo.materiaal}</div>`:''}
+          ${hwInfo.opm?`<div class="opm-bubble">${hwInfo.opm}</div>`:''}
+          ${hwInfo.foto?`<img src="${hwInfo.foto}" style="width:100%;max-height:160px;object-fit:cover;border-radius:8px;margin-top:8px;cursor:pointer" onclick="toonFotoGrootUrl('${hwInfo.foto}')" alt="foto">`:''}
+        </div>`:`<div style="padding:12px 16px;font-size:13px;color:#888">Nog geen haarwerk gekoppeld. Klik op "+ Haarwerk" om toe te voegen.</div>`}
+      </div>
+    </div>`;
+  });
+  el.innerHTML=html||'<p style="color:#888;font-size:13px">Nog geen staarten voor haarwerken.</p>';
+}
+
+function openHWFotoUpload(staartId,bestelId){
+  showModal(`<p style="font-weight:600;margin-bottom:14px">📷 Foto toevoegen / wijzigen</p>
+    <div class="foto-upload-box" style="min-height:120px">
+      <input type="file" accept="image/*" onchange="slaHWFotoOp('${staartId}','${bestelId}',this)">
+      <span style="font-size:36px">📷</span>
+      <span style="font-size:13px;color:#888">Klik om foto te selecteren</span>
+    </div>
+    <button class="btn" style="margin-top:14px" onclick="sluitModal()">Annuleren</button>`);
+}
+
+async function slaHWFotoOp(sid,bid,input){
+  if(!input.files[0])return;
+  const b64=await fotoNaarBase64(input.files[0]);
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten?id=eq.${encodeURIComponent(sid)}`,{method:'PATCH',headers,body:JSON.stringify({foto:b64})});
+  const s=cache.hwStaarten.find(x=>x.id===sid);if(s)s.foto=b64;
+  sluitModal();toast('✓ Foto opgeslagen');laadHaarwerken(bid);
+}
+
+function openHWStaartToevoegen2(bestelId){
+  hwRijTeller=0;hwFotoMap={};
+  showModal(`<p style="font-weight:600;margin-bottom:14px">✂️ Staart toevoegen voor haarwerk</p>
+    <div id="hw-staart-rijen"></div>
+    <div class="row" style="margin-bottom:14px">
+      <button class="btn btn-sm" onclick="voegHWRijToe()">+ Nog een staart</button>
+      <button class="btn btn-sm btn-danger" onclick="verwijderHWRij()">− Verwijderen</button>
+    </div>
+    <div class="row" style="gap:8px"><button class="btn btn-primary" id="hw-st-btn" onclick="slaHWStaartenOp2('${bestelId}')">💾 Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button><span id="hw-st-msg" style="font-size:13px"></span></div>`);
+  voegHWRijToe();
+}
+
+async function slaHWStaartenOp2(bestelId){
+  let nieuw=[];let fout=false;
+  for(let i=0;i<hwRijTeller;i++){
+    const nr=document.getElementById('hws-nr-'+i)?.value.trim();
+    const gew=document.getElementById('hws-gew-'+i)?.value;
+    if(!nr||!gew){fout=true;break;}
+    nieuw.push({id:'hws_'+Date.now()+'_'+i,haarwerk_id:null,bestel_id:bestelId,nr,kleur:document.getElementById('hws-kleur-'+i)?.value||'',gewicht:parseFloat(gew),lengte:document.getElementById('hws-len-'+i)?.value||'',dikte:document.getElementById('hws-dikte-'+i)?.value||'',structuur:document.getElementById('hws-str-'+i)?.value||'',herkomst:document.getElementById('hws-herk-'+i)?.value||'',punt:document.getElementById('hws-punt-'+i)?.value||'',prijs:document.getElementById('hws-prijs-'+i)?.value||''});
+  }
+  if(fout){document.getElementById('hw-st-msg').innerHTML='<span class="warn">Vul nummer en gewicht in</span>';return;}
+  const btn=document.getElementById('hw-st-btn');btn.disabled=true;btn.textContent='Opslaan...';
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten`,{method:'POST',headers,body:JSON.stringify(nieuw)});
+  cache.hwStaarten.push(...nieuw);
+  sluitModal();toast('✓ Staart(en) toegevoegd!');laadHaarwerken(bestelId);
+}
+
+function openNieuwHaarwerkVoorSlaart(staartId,bestelId){
+  showModal(`<p style="font-weight:600;margin-bottom:14px">💇 Haarwerk koppelen aan staart</p>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Type</label><select id="hw-type"><option value="">—</option><option>Pruik</option><option>Haarwerk</option><option>Anders</option></select></div>
+      <div><label>Status</label><select id="hw-status"><option value="in productie">In productie</option><option value="klaar">Klaar</option><option value="geleverd">Geleverd</option></select></div>
+    </div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Klant naam</label><input type="text" id="hw-klant" placeholder="bijv. Sarah de Vries"></div>
+      <div><label>Salon naam</label><input type="text" id="hw-salon" placeholder="bijv. Salon Bella"></div>
+    </div>
+    <div class="grid3" style="margin-bottom:10px">
+      <div><label>Omtrek (cm)</label><input type="text" id="hw-omtrek" placeholder="bijv. 56cm"></div>
+      <div><label>Lengte (cm)</label><input type="text" id="hw-lengte" placeholder="bijv. 40cm"></div>
+      <div><label>Prijs (€)</label><input type="number" id="hw-prijs" placeholder="bijv. 500" step="0.01"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Materiaal gegevens</label><textarea id="hw-materiaal" placeholder="bijv. Rand 2cm kant, onderknoping zijde, 4 klemmetjes..." style="min-height:80px"></textarea></div>
+    <div style="margin-bottom:14px"><label>Opmerkingen</label><textarea id="hw-opm" placeholder="Extra info..."></textarea></div>
+    <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="slaHaarkwerkVoorSlaartOp('${staartId}','${bestelId}')">💾 Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button><span id="hw-msg" style="font-size:13px"></span></div>`);
+}
+
+async function slaHaarkwerkVoorSlaartOp(staartId,bestelId){
+  const hwId='hw_'+Date.now();
+  const nieuwHW={id:hwId,bestel_id:bestelId,type:document.getElementById('hw-type')?.value||'',status:document.getElementById('hw-status')?.value||'in productie',klant:document.getElementById('hw-klant')?.value||'',salon:document.getElementById('hw-salon')?.value||'',omtrek:document.getElementById('hw-omtrek')?.value||'',lengte:document.getElementById('hw-lengte')?.value||'',prijs:document.getElementById('hw-prijs')?.value||'',materiaal:document.getElementById('hw-materiaal')?.value||'',opm:document.getElementById('hw-opm')?.value||''};
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerken`,{method:'POST',headers,body:JSON.stringify(nieuwHW)});
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten?id=eq.${encodeURIComponent(staartId)}`,{method:'PATCH',headers,body:JSON.stringify({haarwerk_id:hwId})});
+  cache.haarwerken.push(nieuwHW);
+  const s=cache.hwStaarten.find(x=>x.id===staartId);if(s)s.haarwerk_id=hwId;
+  sluitModal();toast('✓ Haarwerk opgeslagen!');laadHaarwerken(bestelId);
+}
+
+function openHWSlaartEdit(staartId,bestelId){
+  const s=cache.hwStaarten.find(x=>x.id===staartId);if(!s)return;
+  showModal(`<p style="font-weight:600;margin-bottom:14px">✏️ Staart bewerken — <span class="badge badge-purple">${s.nr}</span></p>
+    <div class="grid3" style="margin-bottom:10px">
+      <div><label>Nummer</label><input type="text" id="hse-nr" value="${s.nr||''}"></div>
+      <div><label>Kleur</label><input type="text" id="hse-kleur" value="${s.kleur||''}"></div>
+      <div><label>Gewicht (g)</label><input type="number" id="hse-gew" value="${s.gewicht||''}"></div>
+    </div>
+    <div class="grid4" style="margin-bottom:10px">
+      <div><label>Lengte (cm)</label><input type="number" id="hse-len" value="${s.lengte||''}"></div>
+      <div><label>Dikte</label><select id="hse-dikte"><option value="">—</option><option ${s.dikte==='Dun'?'selected':''}>Dun</option><option ${s.dikte==='Medium'?'selected':''}>Medium</option><option ${s.dikte==='Dik'?'selected':''}>Dik</option></select></div>
+      <div><label>Structuur</label><select id="hse-str"><option value="">—</option><option ${s.structuur==='Steil'?'selected':''}>Steil</option><option ${s.structuur==='Licht golf'?'selected':''}>Licht golf</option><option ${s.structuur==='Golvend'?'selected':''}>Golvend</option><option ${s.structuur==='Krullig'?'selected':''}>Krullig</option></select></div>
+      <div><label>Herkomst</label><input type="text" id="hse-herk" value="${s.herkomst||''}"></div>
+    </div>
+    <div class="row" style="gap:8px;justify-content:space-between;margin-top:14px">
+      <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="slaHWSlaartEditOp('${staartId}','${bestelId}')">Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button></div>
+      <button class="btn btn-danger btn-sm" onclick="verwijderHWSlaart('${staartId}','${bestelId}')">🗑️ Verwijderen</button>
+    </div>`);
+}
+
+async function slaHWSlaartEditOp(sid,bid){
+  const updates={nr:document.getElementById('hse-nr').value,kleur:document.getElementById('hse-kleur').value,gewicht:parseFloat(document.getElementById('hse-gew').value)||0,lengte:document.getElementById('hse-len').value,dikte:document.getElementById('hse-dikte').value,structuur:document.getElementById('hse-str').value,herkomst:document.getElementById('hse-herk').value};
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten?id=eq.${encodeURIComponent(sid)}`,{method:'PATCH',headers,body:JSON.stringify(updates)});
+  const s=cache.hwStaarten.find(x=>x.id===sid);if(s)Object.assign(s,updates);
+  sluitModal();toast('✓ Staart bijgewerkt');laadHaarwerken(bid);
+}
+
+async function verwijderHWSlaart(sid,bid){
+  if(!confirm('Weet je zeker dat je deze staart wilt verwijderen?'))return;
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten?id=eq.${encodeURIComponent(sid)}`,{method:'DELETE',headers});
+  cache.hwStaarten=cache.hwStaarten.filter(x=>x.id!==sid);
+  sluitModal();toast('✓ Staart verwijderd');laadHaarwerken(bid);
+}
+
+let hwFoto=null;
+async function laadHWFoto(input){
+  if(!input.files[0])return;
+  hwFoto=await fotoNaarBase64(input.files[0]);
+  const box=document.getElementById('hw-foto-box');
+  box.innerHTML=`<input type="file" accept="image/*" onchange="laadHWFoto(this)"><img src="${hwFoto}" style="width:100%;height:56px;object-fit:cover;border-radius:8px"><span style="font-size:10px;color:#888">Wijzigen</span>`;
+}
+
+async function slaHaarkwerkOp(bestelId){
+  const nieuw={
+    id:'hw_'+Date.now(),
+    bestel_id:bestelId,
+    type:document.getElementById('hw-type')?.value||'',
+    status:document.getElementById('hw-status')?.value||'in productie',
+    klant:document.getElementById('hw-klant')?.value||'',
+    salon:document.getElementById('hw-salon')?.value||'',
+    omtrek:document.getElementById('hw-omtrek')?.value||'',
+    lengte:document.getElementById('hw-lengte')?.value||'',
+    prijs:document.getElementById('hw-prijs')?.value||'',
+    materiaal:document.getElementById('hw-materiaal')?.value||'',
+    opm:document.getElementById('hw-opm')?.value||'',
+    foto:hwFoto||null
+  };
+  hwFoto=null;
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/haarwerken`,{method:'POST',headers,body:JSON.stringify(nieuw)});
+    cache.haarwerken.push(nieuw);
+    sluitModal();toast('✓ Haarwerk opgeslagen!');laadHaarwerken(bestelId);
+  }catch(e){document.getElementById('hw-msg').innerHTML='<span class="warn">Fout: '+e.message+'</span>';}
+}
+
+function openHaarkwerkEdit(hwId,bestelId){
+  const h=cache.haarwerken.find(x=>x.id===hwId);if(!h)return;
+  showModal(`<p style="font-weight:600;margin-bottom:14px">✏️ Haarwerk bewerken</p>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Type</label><select id="hwe-type"><option value="">—</option><option ${h.type==='Pruik'?'selected':''}>Pruik</option><option ${h.type==='Haarwerk'?'selected':''}>Haarwerk</option><option ${h.type==='Anders'?'selected':''}>Anders</option></select></div>
+      <div><label>Status</label><select id="hwe-status"><option value="in productie" ${h.status==='in productie'?'selected':''}>In productie</option><option value="klaar" ${h.status==='klaar'?'selected':''}>Klaar</option><option value="geleverd" ${h.status==='geleverd'?'selected':''}>Geleverd</option></select></div>
+    </div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Klant naam</label><input type="text" id="hwe-klant" value="${h.klant||''}"></div>
+      <div><label>Salon naam</label><input type="text" id="hwe-salon" value="${h.salon||''}"></div>
+    </div>
+    <div class="grid3" style="margin-bottom:10px">
+      <div><label>Omtrek</label><input type="text" id="hwe-omtrek" value="${h.omtrek||''}"></div>
+      <div><label>Lengte</label><input type="text" id="hwe-lengte" value="${h.lengte||''}"></div>
+      <div><label>Prijs (€)</label><input type="number" id="hwe-prijs" value="${h.prijs||''}" step="0.01"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Materiaal gegevens</label><textarea id="hwe-materiaal" style="min-height:80px">${h.materiaal||''}</textarea></div>
+    <div style="margin-bottom:14px"><label>Opmerkingen</label><textarea id="hwe-opm">${h.opm||''}</textarea></div>
+    <div class="row" style="gap:8px;justify-content:space-between">
+      <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="updateHaarwerk('${hwId}','${bestelId}')">Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button></div>
+      <button class="btn btn-danger btn-sm" onclick="verwijderHaarwerk('${hwId}','${bestelId}')">🗑️ Verwijderen</button>
+    </div>`);
+}
+
+async function updateHaarwerk(hwId,bestelId){
+  const updates={type:document.getElementById('hwe-type')?.value||'',status:document.getElementById('hwe-status')?.value||'in productie',klant:document.getElementById('hwe-klant')?.value||'',salon:document.getElementById('hwe-salon')?.value||'',omtrek:document.getElementById('hwe-omtrek')?.value||'',lengte:document.getElementById('hwe-lengte')?.value||'',prijs:document.getElementById('hwe-prijs')?.value||'',materiaal:document.getElementById('hwe-materiaal')?.value||'',opm:document.getElementById('hwe-opm')?.value||''};
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerken?id=eq.${encodeURIComponent(hwId)}`,{method:'PATCH',headers,body:JSON.stringify(updates)});
+  const h=cache.haarwerken.find(x=>x.id===hwId);if(h)Object.assign(h,updates);
+  sluitModal();toast('✓ Haarwerk bijgewerkt!');renderHaarwerken(bestelId);
+}
+
+async function verwijderHaarwerk(hwId,bestelId){
+  if(!confirm('Weet je zeker dat je dit haarwerk wilt verwijderen?'))return;
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten?haarwerk_id=eq.${encodeURIComponent(hwId)}`,{method:'DELETE',headers});
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerken?id=eq.${encodeURIComponent(hwId)}`,{method:'DELETE',headers});
+  cache.haarwerken=cache.haarwerken.filter(x=>x.id!==hwId);
+  cache.hwStaarten=cache.hwStaarten.filter(x=>x.haarwerk_id!==hwId);
+  sluitModal();toast('✓ Haarwerk verwijderd');renderHaarwerken(bestelId);
+}
+
+// ── HW STAART KOPPELEN ──
+let hwRijTeller=0;let hwFotoMap={};
+function openHWStaartToevoegen(hwId,bestelId){
+  hwRijTeller=0;hwFotoMap={};
+  showModal(`<p style="font-weight:600;margin-bottom:14px">✂️ Staart koppelen aan haarwerk</p>
+    <div id="hw-staart-rijen"></div>
+    <div class="row" style="margin-bottom:14px">
+      <button class="btn btn-sm" onclick="voegHWRijToe()">+ Nog een staart</button>
+      <button class="btn btn-sm btn-danger" onclick="verwijderHWRij()">− Verwijderen</button>
+    </div>
+    <div class="row" style="gap:8px"><button class="btn btn-primary" id="hw-st-btn" onclick="slaHWStaartenOp('${hwId}','${bestelId}')">💾 Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button><span id="hw-st-msg" style="font-size:13px"></span></div>`);
+  voegHWRijToe();
+}
+
+function hwSlaartRijHTML(i){
+  return `<div class="staart-input-row" id="hw-rij-${i}">
+    <div style="font-size:12px;font-weight:600;color:#888;margin-bottom:8px">Staart ${i+1}</div>
+    <div class="grid3" style="margin-bottom:8px">
+      <div><label>Nummer *</label><input type="text" id="hws-nr-${i}" placeholder="bijv. ST-019"></div>
+      <div><label>Kleur</label><input type="text" id="hws-kleur-${i}" placeholder="bijv. Zwart #1B"></div>
+      <div><label>Gewicht (g) *</label><input type="number" id="hws-gew-${i}" placeholder="250"></div>
+    </div>
+    <div class="grid4" style="margin-bottom:8px">
+      <div><label>Lengte (cm)</label><input type="number" id="hws-len-${i}" placeholder="60"></div>
+      <div><label>Dikte</label><select id="hws-dikte-${i}"><option value="">—</option><option>Dun</option><option>Medium</option><option>Dik</option></select></div>
+      <div><label>Structuur</label><select id="hws-str-${i}"><option value="">—</option><option>Steil</option><option>Licht golf</option><option>Golvend</option><option>Krullig</option></select></div>
+      <div><label>Herkomst</label><input type="text" id="hws-herk-${i}" placeholder="India"></div>
+    </div>
+    <div class="grid2">
+      <div><label>Punt</label><select id="hws-punt-${i}"><option value="">—</option><option>Vol</option><option>Half vol</option><option>Dun</option><option>Zeer dun</option></select></div>
+      <div><label>Inkoopprijs (€)</label><input type="number" id="hws-prijs-${i}" step="0.01" placeholder="45.00"></div>
+    </div>
+  </div>`;
+}
+
+function voegHWRijToe(){document.getElementById('hw-staart-rijen')?.insertAdjacentHTML('beforeend',hwSlaartRijHTML(hwRijTeller));hwRijTeller++;}
+function verwijderHWRij(){if(hwRijTeller<=1)return;hwRijTeller--;document.getElementById('hw-rij-'+hwRijTeller)?.remove();}
+
+async function slaHWStaartenOp(hwId,bestelId){
+  let nieuw=[];let fout=false;
+  for(let i=0;i<hwRijTeller;i++){
+    const nr=document.getElementById('hws-nr-'+i)?.value.trim();
+    const gew=document.getElementById('hws-gew-'+i)?.value;
+    if(!nr||!gew){fout=true;break;}
+    nieuw.push({id:'hws_'+Date.now()+'_'+i,haarwerk_id:hwId,bestel_id:bestelId,nr,kleur:document.getElementById('hws-kleur-'+i)?.value||'',gewicht:parseFloat(gew),lengte:document.getElementById('hws-len-'+i)?.value||'',dikte:document.getElementById('hws-dikte-'+i)?.value||'',structuur:document.getElementById('hws-str-'+i)?.value||'',herkomst:document.getElementById('hws-herk-'+i)?.value||'',punt:document.getElementById('hws-punt-'+i)?.value||'',prijs:document.getElementById('hws-prijs-'+i)?.value||''});
+  }
+  if(fout){document.getElementById('hw-st-msg').innerHTML='<span class="warn">Vul nummer en gewicht in</span>';return;}
+  const btn=document.getElementById('hw-st-btn');btn.disabled=true;btn.textContent='Opslaan...';
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  await fetch(`${SUPABASE_URL}/rest/v1/haarwerk_staarten`,{method:'POST',headers,body:JSON.stringify(nieuw)});
+  cache.hwStaarten.push(...nieuw);
+  sluitModal();toast('✓ Staart(en) gekoppeld!');laadHaarwerken(bestelId);
+}
+
+// ── SALON BESTELLINGEN ──
+let salonCache=[];
+
+async function renderSalonBestellingen(){
+  const el=document.getElementById('bestelling-lijst');
+  el.innerHTML='<p style="color:#888;font-size:14px">Laden...</p>';
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json'};
+  try{
+    const data=await fetch(`${SUPABASE_URL}/rest/v1/salon_bestellingen?select=*&order=created_at.desc`,{headers}).then(r=>r.json());
+    salonCache=Array.isArray(data)?data:[];
+  }catch(e){el.innerHTML='<p style="color:#c0392b">Fout bij laden</p>';return;}
+
+  if(!salonCache.length){
+    el.innerHTML=`<div class="empty-state"><div style="font-size:48px;margin-bottom:12px">🛒</div><p style="font-weight:500;margin-bottom:6px">Nog geen bestellingen</p><p style="font-size:13px">Voeg je eerste salon bestelling toe.</p></div>`;
+    return;
+  }
+
+  const openB=salonCache.filter(b=>!b.verzonden);
+  const geslotenB=salonCache.filter(b=>b.verzonden);
+
+  let html='';
+  if(openB.length){
+    html+=`<p style="font-size:13px;font-weight:600;color:#633806;margin-bottom:8px">⏳ Open bestellingen (${openB.length})</p>`;
+    openB.forEach(b=>html+=salonBestellingKaart(b));
+  }
+  if(geslotenB.length){
+    html+=`<p style="font-size:13px;font-weight:600;color:#888;margin:16px 0 8px">✅ Verzonden bestellingen (${geslotenB.length})</p>`;
+    geslotenB.forEach(b=>html+=salonBestellingKaart(b));
+  }
+  el.innerHTML=html;
+}
+
+function salonBestellingKaart(b){
+  return `<div class="card" style="margin-bottom:10px">
+    <div class="row" style="justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+      <div class="row" style="gap:8px;flex-wrap:wrap">
+        ${b.salon?`<span class="badge badge-purple">${b.salon}</span>`:''}
+        ${b.klant?`<span style="font-size:13px;color:#666">👤 ${b.klant}</span>`:''}
+        ${b.weaving_code?`<span class="badge badge-teal">${b.weaving_code}</span>`:''}
+      </div>
+      <div class="row" style="gap:6px">
+        <button class="btn btn-sm" onclick="openSalonBestellingEdit('${b.id}')">✏️</button>
+        <button class="btn btn-sm btn-danger" onclick="verwijderSalonBestelling('${b.id}')">🗑️</button>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#666;display:flex;gap:16px;flex-wrap:wrap;margin-bottom:8px">
+      ${b.datum_bestelling?`<span>📅 Besteld: ${b.datum_bestelling}</span>`:''}
+      ${b.datum_levering?`<span>🚚 Levering: ${b.datum_levering}</span>`:''}
+      ${b.prijs?`<span>💶 €${parseFloat(b.prijs).toFixed(2)}</span>`:''}
+    </div>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <span style="font-size:12px;padding:3px 10px;border-radius:100px;background:${b.betaald?'#E1F5EE':'#FAEEDA'};color:${b.betaald?'#085041':'#633806'}">${b.betaald?'✓ Betaald':'⏳ Niet betaald'}</span>
+      <span style="font-size:12px;padding:3px 10px;border-radius:100px;background:${b.verzonden?'#E1F5EE':'#FAEEDA'};color:${b.verzonden?'#085041':'#633806'}">${b.verzonden?'✓ Verzonden':'⏳ Niet verzonden'}</span>
+    </div>
+    ${b.opm?`<div class="opm-bubble" style="margin-top:8px">${b.opm}</div>`:''}
+  </div>`;
+}
+
+function nieuweBestellingForm(){
+  showModal(`<p style="font-weight:600;margin-bottom:14px">🛒 Nieuwe salon bestelling</p>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Salon naam</label><input type="text" id="nb-salon" placeholder="bijv. Salon Bella"></div>
+      <div><label>Klant naam</label><input type="text" id="nb-klant" placeholder="bijv. Sarah de Vries"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Weaving code</label><input type="text" id="nb-code" placeholder="bijv. CB-260421-01-6a"></div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Datum bestelling</label><input type="date" id="nb-datum" value="${new Date().toISOString().split('T')[0]}"></div>
+      <div><label>Datum levering</label><input type="date" id="nb-levering"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Prijs (€)</label><input type="number" id="nb-prijs" placeholder="bijv. 150" step="0.01"></div>
+    <div style="margin-bottom:10px">
+      <label>Status</label>
+      <div class="row" style="gap:16px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;color:#1a1a1a"><input type="checkbox" id="nb-betaald"> Betaald</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;color:#1a1a1a"><input type="checkbox" id="nb-verzonden"> Verzonden</label>
+      </div>
+    </div>
+    <div style="margin-bottom:14px"><label>Opmerking</label><textarea id="nb-opm" placeholder="Extra info..."></textarea></div>
+    <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="slaSalonBestellingOp()">💾 Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button><span id="nb-msg" style="font-size:13px"></span></div>`);
+}
+
+async function slaSalonBestellingOp(){
+  const salon=document.getElementById('nb-salon')?.value.trim();
+  const klant=document.getElementById('nb-klant')?.value.trim();
+  const code=document.getElementById('nb-code')?.value.trim();
+  if(!salon&&!klant){document.getElementById('nb-msg').innerHTML='<span class="warn">Vul salon of klant naam in</span>';return;}
+  const nieuw={
+    id:'sb_'+Date.now(),
+    salon,klant,
+    weaving_code:code,
+    datum_bestelling:document.getElementById('nb-datum')?.value||'',
+    datum_levering:document.getElementById('nb-levering')?.value||'',
+    prijs:document.getElementById('nb-prijs')?.value||'',
+    betaald:document.getElementById('nb-betaald')?.checked||false,
+    verzonden:document.getElementById('nb-verzonden')?.checked||false,
+    opm:document.getElementById('nb-opm')?.value||''
+  };
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  try{
+    await fetch(`${SUPABASE_URL}/rest/v1/salon_bestellingen`,{method:'POST',headers,body:JSON.stringify(nieuw)});
+    sluitModal();toast('✓ Bestelling opgeslagen!');renderSalonBestellingen();
+  }catch(e){document.getElementById('nb-msg').innerHTML='<span class="warn">Fout bij opslaan</span>';}
+}
+
+function openSalonBestellingEdit(id){
+  const b=salonCache.find(x=>x.id===id);if(!b)return;
+  showModal(`<p style="font-weight:600;margin-bottom:14px">✏️ Bestelling bewerken</p>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Salon naam</label><input type="text" id="eb-salon" value="${b.salon||''}"></div>
+      <div><label>Klant naam</label><input type="text" id="eb-klant" value="${b.klant||''}"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Weaving code</label><input type="text" id="eb-code" value="${b.weaving_code||''}"></div>
+    <div class="grid2" style="margin-bottom:10px">
+      <div><label>Datum bestelling</label><input type="date" id="eb-datum" value="${b.datum_bestelling||''}"></div>
+      <div><label>Datum levering</label><input type="date" id="eb-levering" value="${b.datum_levering||''}"></div>
+    </div>
+    <div style="margin-bottom:10px"><label>Prijs (€)</label><input type="number" id="eb-prijs" value="${b.prijs||''}" step="0.01"></div>
+    <div style="margin-bottom:10px">
+      <label>Status</label>
+      <div class="row" style="gap:16px;margin-top:6px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;color:#1a1a1a"><input type="checkbox" id="eb-betaald" ${b.betaald?'checked':''}> Betaald</label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:14px;color:#1a1a1a"><input type="checkbox" id="eb-verzonden" ${b.verzonden?'checked':''}> Verzonden</label>
+      </div>
+    </div>
+    <div style="margin-bottom:14px"><label>Opmerking</label><textarea id="eb-opm">${b.opm||''}</textarea></div>
+    <div class="row" style="gap:8px;justify-content:space-between">
+      <div class="row" style="gap:8px"><button class="btn btn-primary" onclick="updateSalonBestelling('${id}')">Opslaan</button><button class="btn" onclick="sluitModal()">Annuleren</button></div>
+      <button class="btn btn-danger btn-sm" onclick="verwijderSalonBestelling('${id}')">🗑️ Verwijderen</button>
+    </div>`);
+}
+
+async function updateSalonBestelling(id){
+  const updates={
+    salon:document.getElementById('eb-salon')?.value||'',
+    klant:document.getElementById('eb-klant')?.value||'',
+    weaving_code:document.getElementById('eb-code')?.value||'',
+    datum_bestelling:document.getElementById('eb-datum')?.value||'',
+    datum_levering:document.getElementById('eb-levering')?.value||'',
+    prijs:document.getElementById('eb-prijs')?.value||'',
+    betaald:document.getElementById('eb-betaald')?.checked||false,
+    verzonden:document.getElementById('eb-verzonden')?.checked||false,
+    opm:document.getElementById('eb-opm')?.value||''
+  };
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY,'Content-Type':'application/json','Prefer':'return=minimal'};
+  await fetch(`${SUPABASE_URL}/rest/v1/salon_bestellingen?id=eq.${encodeURIComponent(id)}`,{method:'PATCH',headers,body:JSON.stringify(updates)});
+  sluitModal();toast('✓ Bestelling bijgewerkt!');renderSalonBestellingen();
+}
+
+async function verwijderSalonBestelling(id){
+  if(!confirm('Weet je zeker dat je deze bestelling wilt verwijderen?'))return;
+  const headers={'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY};
+  await fetch(`${SUPABASE_URL}/rest/v1/salon_bestellingen?id=eq.${encodeURIComponent(id)}`,{method:'DELETE',headers});
+  sluitModal();toast('✓ Bestelling verwijderd');renderSalonBestellingen();
+}
+
+// ── EXPORT ──
+function exporteerAlles(){
+  let csv='Bestelnummer,Status,Fabriek,Datum,Staart nr,Kleur,Lengte,Gewicht,Herkomst,Dikte,Structuur,Inkoopprijs,Opmerking staart,Aantal weavings\n';
+  cache.bestellingen.forEach(b=>{
+    cache.staarten.filter(s=>s.bestel_id===b.id).forEach(s=>{
+      const sw=cache.weavings.filter(w=>w.staart_id===s.id);
+      csv+=`${b.nummer},${b.status},"${b.fabriek||''}",${b.datum},${s.nr},"${s.kleur||''}",${s.lengte||''},${s.gewicht},"${s.herkomst||''}","${s.dikte||''}","${s.structuur||''}",${s.prijs||''},"${(s.opm||'').replace(/"/g,"'")}",${sw.length}\n`;
+    });
+  });
+  downloadCSV(csv,'bestellingen_export.csv');
+}
+function exporteerBestelling(id){
+  const b=cache.bestellingen.find(x=>x.id===id);
+  const st=cache.staarten.filter(s=>s.bestel_id===id);
+  const wv=cache.weavings.filter(w=>w.bestel_id===id);
+  let csv=`Bestelling,${b.nummer}\nFabriek,"${b.fabriek||''}"\nDatum,${b.datum}\n\n`;
+  csv+='Staart nr,Kleur,Lengte,Gewicht,Herkomst,Dikte,Structuur,Inkoopprijs,Opmerking\n';
+  st.forEach(s=>csv+=`${s.nr},"${s.kleur||''}",${s.lengte||''},${s.gewicht},"${s.herkomst||''}","${s.dikte||''}","${s.structuur||''}",${s.prijs||''},"${(s.opm||'').replace(/"/g,"'")}"\n`);
+  if(wv.length){
+    csv+='\nCode,Staart,Gewicht,Lengte,Weft,Kwaliteit,Status,Verkoopprijs,Klant,Opmerking,Datum\n';
+    wv.forEach(w=>{const s=cache.staarten.find(x=>x.id===w.staart_id);csv+=`${w.code},${s?s.nr:''},${w.gewicht},${w.lengte||''},${w.weft||''},${w.kwaliteit||''},${w.status||'beschikbaar'},${w.prijs||''},"${w.klant||''}","${(w.opm||'').replace(/"/g,"'")}",${w.datum}\n`;});
+  }
+  downloadCSV(csv,`${b.nummer}_export.csv`);
+}
+function exporteerWeavings(){
+  let csv='Code,Bestelling,Staart nr,Gewicht,Lengte,Weft,Kwaliteit,Status,Verkoopprijs,Klant,Opmerking weaving,Kleur staart,Herkomst,Opmerking staart,Datum\n';
+  cache.weavings.forEach(w=>{
+    const s=cache.staarten.find(x=>x.id===w.staart_id);
+    const b=cache.bestellingen.find(x=>x.id===w.bestel_id);
+    csv+=`${w.code},${b?b.nummer:''},${s?s.nr:''},${w.gewicht},${w.lengte||''},${w.weft||''},${w.kwaliteit||''},${w.status||'beschikbaar'},${w.prijs||''},"${w.klant||''}","${(w.opm||'').replace(/"/g,"'")}","${s?s.kleur||'':''}","${s?s.herkomst||'':''}","${(s?s.opm||'':'').replace(/"/g,"'")}",${w.datum}\n`;
+  });
+  downloadCSV(csv,'weavings_export.csv');
+}
+function downloadCSV(csv,naam){const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=naam;a.click();}
+
+// ── START ──
+// Auth check wordt gedaan via window.onload in het auth script
+</script>
+
+</div><!-- einde #app -->
+</body>
+</html>
